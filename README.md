@@ -54,7 +54,7 @@ Windows 平台的可逆启动项管理工具。Rust 后端直接调用 Windows A
 
 - Windows 10/11，已安装 WebView2 Runtime（Win11 自带）
 - Node.js >= 22.12
-- Rust 1.88+（edition 2024）及 MSVC 工具链
+- Rust 1.88+（edition 2024）及 MSVC 工具链（`rc.exe` 需在 PATH 中，建议使用 Developer Command Prompt）
 
 ```powershell
 npm ci
@@ -71,6 +71,13 @@ cargo run --manifest-path src-tauri/Cargo.toml -- --allow-multiple
 
 ```powershell
 npm run build
+```
+
+版本号以 `package.json` 为准；发布前同步（脚本会自动校验）：
+
+```powershell
+npm run version:sync -- 0.2.0
+npm run version:check
 ```
 
 Rust 测试：
