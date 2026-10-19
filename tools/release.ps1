@@ -1,0 +1,42 @@
+$ErrorActionPreference = "Stop"
+Set-Location (Split-Path -Parent $PSScriptRoot)
+
+npm run tauri build
+if ($LASTEXITCODE -ne 0) { throw "tauri build failed" }
+
+$version = (Get-Content "package.json" -Raw | ConvertFrom-Json).version
+$targetExe = "src-tauri/target/release/StartupManager.exe"
+$targetInstaller = Get-ChildItem "src-tauri/target/release/bundle/nsis" -Filter "*.exe" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+$targetMsi = Get-ChildItem "src-tauri/target/release/bundle/msi" -Filter "*.msi" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+if (-not (Test-Path $targetExe)) { throw "missing $targetExe" }
+if (-not $targetInstaller) { throw "missing NSIS installer" }
+if (-not $targetMsi) { throw "missing MSI installer" }
+
+New-Item -ItemType Directory -Force "release" | Out-Null
+Copy-Item $targetExe "release/StartupManager.exe" -Force
+Copy-Item $targetInstaller.FullName "release/StartupManager_${version}_x64-setup.exe" -Force
+Copy-Item $targetMsi.FullName "release/StartupManager_${version}_x64.msi" -Force
+
+$installerName = "StartupManager_${version}_x64-setup.exe"
+$msiName = "StartupManager_${version}_x64.msi"
+$exeName = "StartupManager.exe"
+$lines = foreach ($name in @($installerName, $msiName, $exeName)) {
+    $hash = (Get-FileHash (Join-Path "release" $name) -Algorithm SHA256).Hash.ToLower()
+    "$hash *$name"
+}
+
+$checksumPath = Join-Path (Get-Location) "release/SHA256SUMS.txt"
+[System.IO.File]::WriteAllText($checksumPath, (($lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
+
+foreach ($name in @($installerName, $msiName, $exeName)) {
+    $expected = ($lines | Where-Object { $_ -like "*$name" }).Split(" ")[0]
+    $actual = (Get-FileHash (Join-Path "release" $name) -Algorithm SHA256).Hash.ToLower()
+    if ($expected -ne $actual) { throw "SHA256 mismatch for $name" }
+}
+
+Write-Host "Release artifacts updated:"
+Get-Content $checksumPath

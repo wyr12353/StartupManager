@@ -1,0 +1,652 @@
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { toast } from "vue-sonner";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { api, ApiError, onScanProgress } from "@/lib/api";
+import { isMicrosoftItem } from "@/lib/format";
+import type {
+  AppState,
+  FilterMode,
+  ScanProgress,
+  ScanResult,
+  SnapshotDiff,
+  SnapshotSummary,
+  SourceKind,
+  StartupItem,
+  ViewKind,
+} from "@/types";
+
+const nameCollator = new Intl.Collator("zh-CN");
+const ICON_BATCH_SIZE = 50;
+const ICON_CACHE_LIMIT = 512;
+const ICON_RETRY_MS = 60_000;
+
+const sourceByView: Record<Exclude<ViewKind, "snapshots">, SourceKind[]> = {
+  login: ["registryRun", "startupFolder"],
+  tasks: ["scheduledTask"],
+  uwp: ["uwp"],
+  services: ["service"],
+};
+
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    return error.detail ? `${error.message}：${error.detail}` : error.message;
+  }
+  return String(error);
+}
+
+export function useStartup() {
+  const items = ref<StartupItem[]>([]);
+  const loading = ref(true);
+  const scanning = ref(false);
+  const servicesLoading = ref(false);
+  const errors = ref<Partial<Record<SourceKind, string>>>({});
+  const fatalError = ref<string | null>(null);
+  const progress = ref<ScanProgress | null>(null);
+  const appState = ref<AppState | null>(null);
+
+  const view = ref<ViewKind>("login");
+  const filter = ref<FilterMode>("all");
+  const query = ref("");
+  const selectedId = ref<string | null>(null);
+  const busyIds = ref<Set<string>>(new Set());
+
+  const snapshots = ref<SnapshotSummary[]>([]);
+  const snapshotsLoading = ref(true);
+  const snapshotsError = ref<string | null>(null);
+  const snapshotSaving = ref(false);
+  const activeSnapshot = ref<string | null>(null);
+  const diff = ref<SnapshotDiff | null>(null);
+  const diffLoading = ref(false);
+
+  const iconMap = new Map<string, string>();
+  const iconInFlight = new Set<string>();
+  const iconFailedAt = new Map<string, number>();
+  let iconLoading = false;
+  let iconPending = false;
+  let iconTimer: number | undefined;
+
+  let unlisten: UnlistenFn | null = null;
+  let disposed = false;
+  let scanRun = 0;
+  let scanInFlight: Promise<void> | null = null;
+  let diffRun = 0;
+
+  function iconKey(item: StartupItem): string | null {
+    return item.exePath ? item.exePath.toLowerCase() : null;
+  }
+
+  function attachIcon(item: StartupItem): StartupItem {
+    const key = iconKey(item);
+    if (!key) {
+      return item;
+    }
+    const icon = iconMap.get(key);
+    return icon ? { ...item, icon } : item;
+  }
+
+  function scheduleIcons() {
+    if (disposed) {
+      return;
+    }
+    if (iconTimer !== undefined) {
+      window.clearTimeout(iconTimer);
+    }
+    iconTimer = window.setTimeout(() => {
+      iconTimer = undefined;
+      void loadIcons();
+    }, 120);
+  }
+
+  async function loadIcons() {
+    if (disposed) {
+      return;
+    }
+    if (iconLoading) {
+      iconPending = true;
+      return;
+    }
+    const paths = new Map<string, string>();
+    for (const item of viewItems.value) {
+      if (item.exePath) {
+        paths.set(item.exePath.toLowerCase(), item.exePath);
+      }
+    }
+    const now = Date.now();
+    const missing: string[] = [];
+    for (const [key, path] of paths) {
+      if (iconMap.has(key) || iconInFlight.has(key)) {
+        continue;
+      }
+      const failedAt = iconFailedAt.get(key);
+      if (failedAt === undefined || now - failedAt >= ICON_RETRY_MS) {
+        missing.push(path);
+      }
+    }
+    if (missing.length === 0) {
+      return;
+    }
+
+    iconLoading = true;
+    for (const path of missing) {
+      iconInFlight.add(path.toLowerCase());
+    }
+    try {
+      for (let start = 0; start < missing.length; start += ICON_BATCH_SIZE) {
+        const batch = missing.slice(start, start + ICON_BATCH_SIZE);
+        const entries = await api.loadIcons(batch);
+        if (disposed) {
+          return;
+        }
+        for (const entry of entries) {
+          const key = entry.path.toLowerCase();
+          if (entry.icon) {
+            iconMap.set(key, entry.icon);
+            iconFailedAt.delete(key);
+          } else {
+            iconFailedAt.set(key, Date.now());
+          }
+        }
+      }
+      if (iconMap.size > ICON_CACHE_LIMIT) {
+        iconMap.clear();
+      }
+      items.value = items.value.map(attachIcon);
+    } catch {
+      // Retry on the next scan rather than poisoning the cache forever.
+    } finally {
+      for (const path of missing) {
+        iconInFlight.delete(path.toLowerCase());
+      }
+      iconLoading = false;
+      if (iconPending && !disposed) {
+        iconPending = false;
+        scheduleIcons();
+      }
+    }
+  }
+
+  const viewItems = computed(() => {
+    if (view.value === "snapshots") {
+      return [];
+    }
+    const sources = sourceByView[view.value];
+    return items.value.filter((item) => sources.includes(item.source));
+  });
+
+  const visibleItems = computed(() => {
+    let list = viewItems.value;
+    const normalizedQuery = query.value.trim().toLowerCase();
+    if (normalizedQuery) {
+      list = list.filter((item) =>
+        [item.name, item.command, item.publisher, item.origin].some((value) =>
+          value?.toLowerCase().includes(normalizedQuery),
+        ),
+      );
+    }
+    switch (filter.value) {
+      case "enabled":
+        list = list.filter((item) => item.enabled);
+        break;
+      case "disabled":
+        list = list.filter((item) => !item.enabled);
+        break;
+      case "thirdParty":
+        list = list.filter((item) => !isMicrosoftItem(item));
+        break;
+      case "unknownPublisher":
+        list = list.filter((item) => !item.publisher);
+        break;
+      case "all":
+        break;
+    }
+    return [...list].sort((a, b) => nameCollator.compare(a.name, b.name));
+  });
+
+  const counts = computed<Record<ViewKind, number>>(() => {
+    let login = 0;
+    let tasks = 0;
+    let uwp = 0;
+    let services = 0;
+    for (const item of items.value) {
+      switch (item.source) {
+        case "registryRun":
+        case "startupFolder":
+          login += 1;
+          break;
+        case "scheduledTask":
+          tasks += 1;
+          break;
+        case "uwp":
+          uwp += 1;
+          break;
+        case "service":
+          services += 1;
+          break;
+      }
+    }
+    return {
+      login,
+      tasks,
+      uwp,
+      services,
+      snapshots: snapshots.value.length,
+    };
+  });
+
+  const statusCounts = computed(() => {
+    let enabled = 0;
+    for (const item of viewItems.value) {
+      if (item.enabled) {
+        enabled += 1;
+      }
+    }
+    return { enabled, disabled: viewItems.value.length - enabled };
+  });
+  const enabledCount = computed(() => statusCounts.value.enabled);
+  const disabledCount = computed(() => statusCounts.value.disabled);
+  const selectedItem = computed(
+    () => items.value.find((item) => item.id === selectedId.value) ?? null,
+  );
+  const currentLoading = computed(
+    () =>
+      loading.value || (view.value === "services" && servicesLoading.value),
+  );
+
+  function replaceItems(next: StartupItem[]) {
+    items.value = next;
+  }
+
+  function updateItem(next: StartupItem) {
+    items.value = items.value.map((item) => {
+      if (item.id !== next.id) {
+        return item;
+      }
+      const icon =
+        item.exePath === next.exePath
+          ? (item.icon ?? attachIcon(next).icon)
+          : attachIcon(next).icon;
+      return { ...next, icon };
+    });
+  }
+
+  function setSourceError(source: SourceKind, message: string) {
+    errors.value = { ...errors.value, [source]: message };
+  }
+
+  function clearSourceError(source: SourceKind) {
+    const next = { ...errors.value };
+    delete next[source];
+    errors.value = next;
+  }
+
+  function mergeResult(result: ScanResult) {
+    if (result.error) {
+      setSourceError(result.source, result.error);
+      // Keep the previous items for this source so a failed refresh does not
+      // make the list look empty.
+      return;
+    }
+    clearSourceError(result.source);
+    const others = items.value.filter((item) => item.source !== result.source);
+    const next = result.items.map(attachIcon);
+    replaceItems([...others, ...next]);
+    scheduleIcons();
+  }
+
+  function applySnapshotList(list: SnapshotSummary[]) {
+    snapshots.value = list;
+    snapshotsError.value = null;
+    if (
+      activeSnapshot.value &&
+      !list.some((snapshot) => snapshot.file === activeSnapshot.value)
+    ) {
+      diffRun += 1;
+      activeSnapshot.value = null;
+      diff.value = null;
+      diffLoading.value = false;
+    }
+  }
+
+  async function runScan(run: number) {
+    loading.value = true;
+    scanning.value = true;
+    snapshotsLoading.value = true;
+    snapshotsError.value = null;
+    progress.value = null;
+    fatalError.value = null;
+    errors.value = {};
+
+    // These do not depend on the scan; start them immediately so the sidebar
+    // and snapshot page do not show stale/empty state while services load.
+    const stateRequest = api.getAppState().then(
+      (value) => {
+        if (run === scanRun) {
+          appState.value = value;
+        }
+        return { ok: true as const, value };
+      },
+      (reason: unknown) => ({ ok: false as const, reason }),
+    );
+    const snapshotRequest = api.listSnapshots().then(
+      (value) => {
+        if (run === scanRun) {
+          applySnapshotList(value);
+          snapshotsLoading.value = false;
+        }
+        return { ok: true as const, value };
+      },
+      (reason: unknown) => {
+        if (run === scanRun) {
+          const apiError = reason instanceof ApiError ? reason : null;
+          snapshotsError.value = apiError?.detail
+            ? `${apiError.message}：${apiError.detail}`
+            : (apiError?.message ?? "读取快照失败");
+          toast.error(apiError?.message ?? "读取快照失败", {
+            description: apiError?.detail ?? undefined,
+          });
+          snapshotsLoading.value = false;
+        }
+        return { ok: false as const, reason };
+      },
+    );
+
+    try {
+      const fast = api
+        .scanFast()
+        .then((results) => {
+          if (run === scanRun) {
+            results.forEach(mergeResult);
+          }
+        })
+        .catch((error) => {
+          if (run === scanRun) {
+            fatalError.value ??= errorMessage(error);
+          }
+        });
+      const tasks = api
+        .scanTasks()
+        .then((results) => {
+          if (run === scanRun) {
+            results.forEach(mergeResult);
+          }
+        })
+        .catch((error) => {
+          if (run === scanRun) {
+            fatalError.value ??= errorMessage(error);
+          }
+        });
+
+      await Promise.allSettled([fast, tasks]);
+      if (run !== scanRun) {
+        return;
+      }
+      loading.value = false;
+
+      servicesLoading.value = true;
+      await api
+        .scanServices()
+        .then((results) => {
+          if (run === scanRun) {
+            results.forEach(mergeResult);
+          }
+        })
+        .catch((error) => {
+          if (run === scanRun) {
+            setSourceError("service", errorMessage(error));
+          }
+        })
+        .finally(() => {
+          if (run === scanRun) {
+            servicesLoading.value = false;
+          }
+        });
+      if (run !== scanRun) {
+        return;
+      }
+
+      await Promise.all([stateRequest, snapshotRequest]);
+      if (run !== scanRun) {
+        return;
+      }
+    } finally {
+      if (run === scanRun) {
+        loading.value = false;
+        servicesLoading.value = false;
+        scanning.value = false;
+      }
+    }
+  }
+
+  function scanAll(): Promise<void> {
+    if (scanInFlight) {
+      return scanInFlight;
+    }
+    if (diffLoading.value || snapshotSaving.value) {
+      return Promise.resolve();
+    }
+    const task = runScan(++scanRun).finally(() => {
+      scanInFlight = null;
+    });
+    scanInFlight = task;
+    return task;
+  }
+
+  async function toggle(item: StartupItem, enabled: boolean) {
+    if (item.readonly || busyIds.value.has(item.id)) {
+      return;
+    }
+    const previous = item.enabled;
+    const busy = new Set(busyIds.value);
+    busy.add(item.id);
+    busyIds.value = busy;
+    updateItem({ ...item, enabled });
+
+    try {
+      await api.setItemEnabled(item.id, item.source, enabled);
+      toast.success(enabled ? "已启用" : "已禁用", {
+        description: item.name,
+      });
+    } catch (error) {
+      updateItem({ ...item, enabled: previous });
+      const apiError = error instanceof ApiError ? error : null;
+      toast.error(apiError?.message ?? "操作失败", {
+        description:
+          apiError?.detail ??
+          (error instanceof Error ? error.message : String(error)),
+      });
+    } finally {
+      const next = new Set(busyIds.value);
+      next.delete(item.id);
+      busyIds.value = next;
+    }
+  }
+
+  async function saveSnapshot() {
+    if (snapshotSaving.value || scanning.value) {
+      return;
+    }
+    snapshotSaving.value = true;
+    try {
+      const summary = await api.saveSnapshot();
+      toast.success("快照已保存", {
+        description: `共 ${summary.count} 项，文件 ${summary.file}`,
+      });
+      try {
+        applySnapshotList(await api.listSnapshots());
+      } catch {
+        // The snapshot itself was saved; keep the current list and let the
+        // next refresh pick it up.
+      }
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : null;
+      toast.error(apiError?.message ?? "保存快照失败", {
+        description: apiError?.detail ?? undefined,
+      });
+    } finally {
+      snapshotSaving.value = false;
+    }
+  }
+
+  async function refreshSnapshots() {
+    if (snapshotsLoading.value) {
+      return;
+    }
+    snapshotsLoading.value = true;
+    snapshotsError.value = null;
+    try {
+      applySnapshotList(await api.listSnapshots());
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : null;
+      snapshotsError.value = apiError?.detail
+        ? `${apiError.message}：${apiError.detail}`
+        : (apiError?.message ?? "读取快照失败");
+      toast.error(apiError?.message ?? "读取快照失败", {
+        description: apiError?.detail ?? undefined,
+      });
+    } finally {
+      snapshotsLoading.value = false;
+    }
+  }
+
+  async function loadDiff(file: string) {
+    if (diffLoading.value || scanning.value) {
+      return;
+    }
+    const run = ++diffRun;
+    diffLoading.value = true;
+    activeSnapshot.value = file;
+    try {
+      const next = await api.diffSnapshot(file);
+      if (run === diffRun) {
+        diff.value = next;
+      }
+    } catch (error) {
+      if (run !== diffRun) {
+        return;
+      }
+      const apiError = error instanceof ApiError ? error : null;
+      toast.error(apiError?.message ?? "对比快照失败", {
+        description: apiError?.detail ?? undefined,
+      });
+      diff.value = null;
+      // Show the "select a snapshot" hint instead of a blank pane.
+      activeSnapshot.value = null;
+    } finally {
+      if (run === diffRun) {
+        diffLoading.value = false;
+      }
+    }
+  }
+
+  async function deleteSnapshot(file: string) {
+    try {
+      await api.deleteSnapshot(file);
+      if (activeSnapshot.value === file) {
+        diffRun += 1;
+        activeSnapshot.value = null;
+        diff.value = null;
+        diffLoading.value = false;
+      }
+      snapshots.value = snapshots.value.filter(
+        (snapshot) => snapshot.file !== file,
+      );
+      toast.success("快照已删除");
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : null;
+      toast.error(apiError?.message ?? "删除快照失败", {
+        description: apiError?.detail ?? undefined,
+      });
+    }
+  }
+
+  async function openLocation(item: StartupItem) {
+    try {
+      await api.openLocation(item.id, item.source);
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : null;
+      toast.error(apiError?.message ?? "无法打开文件位置", {
+        description: apiError?.detail ?? undefined,
+      });
+    }
+  }
+
+  function setView(next: ViewKind) {
+    if (next === view.value) {
+      return;
+    }
+    view.value = next;
+    selectedId.value = null;
+    scheduleIcons();
+  }
+
+  function selectItem(item: StartupItem | null) {
+    selectedId.value = item?.id ?? null;
+  }
+
+  onMounted(() => {
+    // Start scanning immediately; a slow or failed progress listener must not
+    // delay the first paint of real data.
+    void scanAll();
+    void onScanProgress((event) => {
+      progress.value = event;
+    })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+        } else {
+          unlisten = fn;
+        }
+      })
+      .catch(() => {
+        // Progress is cosmetic.
+      });
+  });
+
+  onBeforeUnmount(() => {
+    disposed = true;
+    unlisten?.();
+    unlisten = null;
+    if (iconTimer !== undefined) {
+      window.clearTimeout(iconTimer);
+      iconTimer = undefined;
+    }
+  });
+
+  return {
+    scanning,
+    loading,
+    servicesLoading,
+    currentLoading,
+    errors,
+    fatalError,
+    progress,
+    appState,
+    view,
+    filter,
+    query,
+    selectedId,
+    selectedItem,
+    busyIds,
+    snapshots,
+    snapshotsLoading,
+    snapshotsError,
+    snapshotSaving,
+    activeSnapshot,
+    diff,
+    diffLoading,
+    viewItems,
+    visibleItems,
+    counts,
+    enabledCount,
+    disabledCount,
+    scanAll,
+    toggle,
+    saveSnapshot,
+    refreshSnapshots,
+    loadDiff,
+    deleteSnapshot,
+    openLocation,
+    setView,
+    selectItem,
+  };
+}

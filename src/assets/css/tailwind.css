@@ -1,0 +1,274 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+
+  /* 桌面工具的阅读尺度：整体从紧凑字号上调一档 */
+  --text-xs: 0.8125rem;
+  --text-sm: 0.9375rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  color-scheme: light;
+  --radius: 0.5rem;
+
+  --background: #f3f3f5;
+  --foreground: #18181c;
+  --card: #ffffff;
+  --card-foreground: #18181c;
+  --popover: #ffffff;
+  --popover-foreground: #18181c;
+  --primary: #0067cd;
+  --primary-foreground: #ffffff;
+  --secondary: #ececf0;
+  --secondary-foreground: #18181c;
+  --muted: #ececf0;
+  --muted-foreground: #5b5b66;
+  --accent: #e8e8ee;
+  --accent-foreground: #18181c;
+  --destructive: #d92d20;
+  --success: #15803d;
+  --warning: #b45309;
+  --border: #e2e2e8;
+  --input: #b8b8c6;
+  --ring: #0067cd;
+  --sidebar: #f7f7f9;
+  --sidebar-foreground: #18181c;
+  --sidebar-accent: #e8e8ee;
+  --sidebar-accent-foreground: #18181c;
+  --sidebar-border: #e2e2e8;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0e0e10;
+  --foreground: #f2f2f5;
+  --card: #18181c;
+  --card-foreground: #f2f2f5;
+  --popover: #18181c;
+  --popover-foreground: #f2f2f5;
+  --primary: #0a84ff;
+  --primary-foreground: #ffffff;
+  --secondary: #202026;
+  --secondary-foreground: #f2f2f5;
+  --muted: #202026;
+  --muted-foreground: #a1a1aa;
+  --accent: #26262c;
+  --accent-foreground: #f2f2f5;
+  --destructive: #f87171;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --border: #26262c;
+  --input: #2e2e36;
+  --ring: #0a84ff;
+  --sidebar: #121216;
+  --sidebar-foreground: #f2f2f5;
+  --sidebar-accent: #202026;
+  --sidebar-accent-foreground: #f2f2f5;
+  --sidebar-border: #26262c;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 15px;
+    line-height: 1.6;
+    overflow: hidden;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 32%, transparent);
+  }
+}
+
+@layer components {
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-radio-item"],
+  [data-slot="dropdown-menu-checkbox-item"] {
+    min-height: 2.25rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    font-size: 14px;
+  }
+
+  [data-slot="alert-dialog-title"] {
+    font-size: 18px;
+    line-height: 1.4;
+  }
+
+  [data-slot="alert-dialog-description"] {
+    font-size: 14px;
+    line-height: 1.7;
+  }
+
+  [data-sonner-toast] {
+    font-size: 14px !important;
+  }
+}
+
+/* ---- 交互动效 ---- */
+
+.view-enter-active,
+.view-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.view-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.view-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 150ms ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.collapse-enter-active,
+.collapse-leave-active {
+  transition: grid-template-rows 200ms ease, opacity 180ms ease;
+}
+
+.collapse-enter-from,
+.collapse-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.list-move,
+.list-enter-active,
+.list-leave-active {
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.list-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.list-leave-to {
+  opacity: 0;
+  transform: translateX(6px);
+}
+
+.list-leave-active {
+  position: absolute;
+  right: 0.5rem;
+  left: 0.5rem;
+}
+
+.icon-swap-enter-active,
+.icon-swap-leave-active {
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.icon-swap-enter-from {
+  opacity: 0;
+  transform: rotate(-90deg) scale(0.6);
+}
+
+.icon-swap-leave-to {
+  opacity: 0;
+  transform: rotate(90deg) scale(0.6);
+}
+
+.pop-enter-active,
+.pop-leave-active {
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.pop-enter-from,
+.pop-leave-to {
+  opacity: 0;
+  transform: scale(0.7);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view-enter-active,
+  .view-leave-active,
+  .fade-enter-active,
+  .fade-leave-active,
+  .collapse-enter-active,
+  .collapse-leave-active,
+  .list-move,
+  .list-enter-active,
+  .list-leave-active,
+  .icon-swap-enter-active,
+  .icon-swap-leave-active,
+  .pop-enter-active,
+  .pop-leave-active {
+    transition: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
