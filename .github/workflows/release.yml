@@ -23,12 +23,14 @@ jobs:
         shell: pwsh
         run: |
           $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
-          $sdk = Get-ChildItem $sdkRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
-          $rcDir = Join-Path $sdk.FullName 'x64'
-          if (-not (Test-Path (Join-Path $rcDir 'rc.exe'))) {
-            throw "rc.exe not found in $rcDir"
+          $rc = Get-ChildItem $sdkRoot -Recurse -Filter rc.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\rc\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $rc) {
+            throw "rc.exe not found under $sdkRoot"
           }
-          $rcDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          $rc.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - uses: dtolnay/rust-toolchain@master
         with:
