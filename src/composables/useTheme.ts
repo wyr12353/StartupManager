@@ -13,11 +13,7 @@ export function useTheme() {
     emitAuto: true,
   });
 
-  const isDark = computed(
-    () =>
-      mode.value === "dark" ||
-      (mode.value === "auto" && mode.system.value),
-  );
+  const isDark = computed(() => mode.state.value === "dark");
 
   function setMode(next: ThemeMode) {
     mode.value = next;

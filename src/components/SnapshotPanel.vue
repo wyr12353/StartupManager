@@ -33,6 +33,7 @@ defineProps<{
   snapshotsLoading: boolean;
   error: string | null;
   scanning: boolean;
+  deleting: string | null;
   diff: SnapshotDiff | null;
   activeSnapshot: string | null;
   diffLoading: boolean;
@@ -106,7 +107,7 @@ function changeLabel(change: ItemChange): string {
                 : 'text-muted-foreground hover:text-foreground'
             "
             :aria-current="activeSnapshot === snapshot.file ? 'true' : undefined"
-            :disabled="diffLoading || scanning"
+            :disabled="diffLoading || scanning || saving"
             @click="emit('load-diff', snapshot.file)"
           >
             <span class="block text-[14px] font-medium">
@@ -120,6 +121,8 @@ function changeLabel(change: ItemChange): string {
             variant="ghost"
             size="icon-sm"
             class="absolute top-1.5 right-1.5 size-7 text-muted-foreground opacity-60 transition-opacity hover:text-destructive group-hover:opacity-100"
+            :disabled="Boolean(deleting)"
+            :aria-busy="deleting === snapshot.file"
             :aria-label="`删除快照 ${formatDateTime(snapshot.createdAt)}`"
             @click.stop="askDelete(snapshot.file)"
           >
@@ -127,10 +130,21 @@ function changeLabel(change: ItemChange): string {
           </Button>
         </div>
 
-        <div v-if="snapshotsLoading" key="snapshots-loading" class="space-y-2 px-3 py-3">
+        <div
+          v-if="snapshotsLoading && snapshots.length === 0 && !error"
+          key="snapshots-loading"
+          class="space-y-2 px-3 py-3"
+        >
           <Skeleton class="h-12 w-full" />
           <Skeleton class="h-12 w-full" />
           <Skeleton class="h-12 w-full" />
+        </div>
+        <div
+          v-else-if="error && snapshots.length === 0"
+          key="error"
+          class="px-3 py-8 text-center text-[13px] leading-relaxed text-destructive"
+        >
+          {{ error }}
         </div>
         <div
           v-else-if="snapshots.length === 0"
@@ -146,7 +160,7 @@ function changeLabel(change: ItemChange): string {
           variant="outline"
           size="sm"
           class="h-9 w-full gap-2 text-[14px]"
-          :disabled="saving || scanning"
+          :disabled="saving || scanning || diffLoading"
           @click="emit('save')"
         >
           <CameraIcon :class="saving ? 'animate-pulse' : ''" />
@@ -179,7 +193,11 @@ function changeLabel(change: ItemChange): string {
           {{ error }}
         </div>
         <Transition name="fade" mode="out-in">
-        <div v-if="snapshotsLoading" key="snapshots-loading" class="space-y-4 p-5">
+        <div
+          v-if="snapshotsLoading && !diff"
+          key="snapshots-loading"
+          class="space-y-4 p-5"
+        >
           <Skeleton class="h-10 w-72" />
           <Skeleton class="h-24 w-full" />
           <Skeleton class="h-24 w-full" />
@@ -191,6 +209,7 @@ function changeLabel(change: ItemChange): string {
           description="保存一次当前状态，以后安装软件或更新后再次对比，就能看到这次多了什么、什么被改了。"
           action-label="保存当前快照"
           :action-icon="CameraIcon"
+          :disabled="saving || scanning || diffLoading"
           @action="emit('save')"
         />
       </div>

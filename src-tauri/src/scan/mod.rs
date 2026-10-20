@@ -84,48 +84,59 @@ pub fn scan_all_light() -> Vec<ScanResult> {
     ]
 }
 
-/// Looks up a single item for an action. Metadata (publisher/signature) is
-/// skipped: it is expensive and would touch user-controlled paths in the
-/// elevated helper.
-pub fn find_item(id: &str) -> AppResult<StartupItem> {
-    find_item_with(id, true)
-}
-
-/// Action lookups do not need the `.lnk` target. Skipping link resolution
-/// keeps the elevated helper away from user-writable shell link data.
-pub fn find_item_for_action(id: &str) -> AppResult<StartupItem> {
-    find_item_with(id, false)
-}
-
-/// Looks up a single item in one source. Falls back to the full scan when the
-/// source does not contain the id, so a stale source hint cannot make the item
-/// disappear.
+/// Looks up a single item in one source. Falls back to the other sources when
+/// the source does not contain the id, so a stale source hint cannot make the
+/// item disappear.
 pub fn find_item_in_source(
     id: &str,
     source: SourceKind,
     resolve_links: bool,
 ) -> AppResult<StartupItem> {
-    let result = match source {
+    let result = scan_source(source, resolve_links);
+    let source_error = result.error.clone();
+    if let Some(item) = result.items.into_iter().find(|item| item.id == id) {
+        return Ok(item);
+    }
+    match find_item_with(id, resolve_links, Some(source)) {
+        Ok(item) => Ok(item),
+        Err(err) => match source_error {
+            Some(error) => Err(err.with_detail(format!("{source:?} 扫描失败：{error}"))),
+            None => Err(err),
+        },
+    }
+}
+
+fn scan_source(source: SourceKind, resolve_links: bool) -> ScanResult {
+    match source {
         SourceKind::RegistryRun => registry_run::scan_with(false),
         SourceKind::StartupFolder => startup_folder::scan_with(false, resolve_links),
         SourceKind::Uwp => uwp::scan(),
         SourceKind::ScheduledTask => tasks::scan_with(false),
         SourceKind::Service => services::scan_with(false),
-    };
-    if let Some(item) = result.items.into_iter().find(|item| item.id == id) {
-        return Ok(item);
     }
-    find_item_with(id, resolve_links)
 }
 
-fn find_item_with(id: &str, resolve_links: bool) -> AppResult<StartupItem> {
-    let results = [
-        registry_run::scan_with(false),
-        startup_folder::scan_with(false, resolve_links),
-        uwp::scan(),
-        tasks::scan_with(false),
-        services::scan_with(false),
-    ];
+fn find_item_with(
+    id: &str,
+    resolve_links: bool,
+    skip: Option<SourceKind>,
+) -> AppResult<StartupItem> {
+    let mut results = Vec::with_capacity(5);
+    if skip != Some(SourceKind::RegistryRun) {
+        results.push(registry_run::scan_with(false));
+    }
+    if skip != Some(SourceKind::StartupFolder) {
+        results.push(startup_folder::scan_with(false, resolve_links));
+    }
+    if skip != Some(SourceKind::Uwp) {
+        results.push(uwp::scan());
+    }
+    if skip != Some(SourceKind::ScheduledTask) {
+        results.push(tasks::scan_with(false));
+    }
+    if skip != Some(SourceKind::Service) {
+        results.push(services::scan_with(false));
+    }
     for result in results {
         if let Some(item) = result.items.into_iter().find(|item| item.id == id) {
             return Ok(item);

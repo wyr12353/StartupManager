@@ -8,14 +8,10 @@ createApp(App).mount("#app");
 
 // The main window is created hidden to avoid WebView2's white pre-paint
 // frame. Show it after the themed shell has actually been painted.
-requestAnimationFrame(() => {
-  requestAnimationFrame(() => {
-    // Give WebView2's compositor one more beat to present the first themed
-    // frame before the hidden window is revealed.
-    window.setTimeout(() => {
-      void invoke("show_main_window").catch(() => {
-        // The Rust fallback shows the window if this call fails.
-      });
-    }, 60);
+// Hidden WebView2 windows can pause requestAnimationFrame, so use a timer
+// (which still runs) to reveal the window after the first themed frame.
+window.setTimeout(() => {
+  void invoke("show_main_window").catch(() => {
+    // The Rust fallback shows the window if this call fails.
   });
-});
+}, 80);

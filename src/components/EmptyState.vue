@@ -9,10 +9,12 @@ withDefaults(
     description: string;
     actionLabel?: string;
     actionIcon?: Component;
+    disabled?: boolean;
   }>(),
   {
     actionLabel: "",
     actionIcon: () => RefreshCwIcon,
+    disabled: false,
   },
 );
 
@@ -39,6 +41,7 @@ const emit = defineEmits<{
       variant="outline"
       size="sm"
       class="h-9 gap-2 text-[14px]"
+      :disabled="disabled"
       @click="emit('action')"
     >
       <component :is="actionIcon" />

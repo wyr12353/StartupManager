@@ -70,6 +70,7 @@ const ELEVATION_TIMEOUT: Duration = Duration::from_secs(60);
 const IPC_TIMEOUT: Duration = Duration::from_secs(30);
 const IPC_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const MAX_IPC_LINE: usize = 1024 * 1024;
 
 fn ipc_timeout(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, message)
@@ -114,20 +115,26 @@ fn pipe_handle(stream: &LocalSocketStream) -> io::Result<HANDLE> {
 fn read_line_deadline(stream: &mut LocalSocketStream, deadline: Instant) -> io::Result<String> {
     let handle = pipe_handle(stream)?;
     let mut data = Vec::new();
+    let mut search_from = 0;
     let mut buffer = [0u8; 4096];
     loop {
+        if Instant::now() >= deadline {
+            return Err(ipc_timeout("IPC 读取超时"));
+        }
         let mut available = 0u32;
         if let Err(err) =
             unsafe { PeekNamedPipe(handle, None, 0, None, Some(&mut available), None) }
         {
-            let code = err.code().0;
-            if code == 109 || code == 233 {
+            // `windows` converts Win32 errors to HRESULTs, so compare the
+            // HRESULT form of ERROR_BROKEN_PIPE / ERROR_PIPE_NOT_CONNECTED.
+            let hr = err.code().0 as u32;
+            if hr == 0x8007_006D || hr == 0x8007_00E9 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     "提权进程已关闭连接",
                 ));
             }
-            return Err(io::Error::from_raw_os_error(code));
+            return Err(io::Error::from_raw_os_error((hr & 0xFFFF) as i32));
         }
         if available > 0 {
             let want = (available as usize).min(buffer.len());
@@ -140,18 +147,23 @@ fn read_line_deadline(stream: &mut LocalSocketStream, deadline: Instant) -> io::
                 }
                 Ok(n) => {
                     data.extend_from_slice(&buffer[..n]);
-                    if data.contains(&b'\n') {
+                    if data.len() > MAX_IPC_LINE {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "IPC 单行消息过长",
+                        ));
+                    }
+                    if let Some(pos) = data[search_from..].iter().position(|byte| *byte == b'\n') {
+                        let end = search_from + pos + 1;
+                        data.truncate(end);
                         return String::from_utf8(data)
                             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err));
                     }
-                    continue;
+                    search_from = data.len();
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
                 Err(err) => return Err(err),
             }
-        }
-        if Instant::now() >= deadline {
-            return Err(ipc_timeout("IPC 读取超时"));
         }
         std::thread::sleep(IPC_POLL_INTERVAL);
     }
@@ -197,7 +209,7 @@ fn process_image_path(pid: u32) -> Option<PathBuf> {
     };
 
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
-    let mut buffer = [0u16; 1024];
+    let mut buffer = vec![0u16; 32768];
     let mut length = buffer.len() as u32;
     let ok = unsafe {
         QueryFullProcessImageNameW(
@@ -529,6 +541,15 @@ mod tests {
                 .trim_end(),
             "world"
         );
+    }
+
+    #[test]
+    fn ipc_read_detects_closed_peer() {
+        let (mut server, client) = pipe_pair();
+        drop(client);
+        let err = read_line_deadline(&mut server, Instant::now() + Duration::from_secs(1))
+            .expect_err("read should observe a closed peer");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof, "err: {err}");
     }
 
     #[test]

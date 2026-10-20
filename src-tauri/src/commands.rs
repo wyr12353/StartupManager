@@ -70,7 +70,7 @@ pub async fn set_item_enabled(
 pub async fn save_snapshot() -> Result<SnapshotSummary, AppError> {
     tauri::async_runtime::spawn_blocking(|| {
         let _guard = snapshot_scan_guard();
-        let results = scan::scan_all(None);
+        let results = scan::scan_all_light();
         ensure_complete_scan(&results, "保存快照失败")?;
         let items = results
             .into_iter()

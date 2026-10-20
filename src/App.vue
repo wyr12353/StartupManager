@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { toast } from "vue-sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import SideNav from "@/components/SideNav.vue";
@@ -31,6 +32,7 @@ const {
   snapshotsLoading,
   snapshotsError,
   snapshotSaving,
+  deletingSnapshot,
   activeSnapshot,
   diff,
   diffLoading,
@@ -80,6 +82,11 @@ function requestToggle(item: StartupItem, enabled: boolean) {
   void toggle(item, enabled);
 }
 
+function clearFilters() {
+  query.value = "";
+  filter.value = "all";
+}
+
 function onConfirm() {
   const request = confirmRequest.value;
   confirmRequest.value = null;
@@ -89,6 +96,16 @@ function onConfirm() {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  // Rescanning remains useful while a detail sheet is open.
+  if (event.key === "F5" && !event.repeat) {
+    event.preventDefault();
+    if (snapshotSaving.value || diffLoading.value) {
+      toast.info("正在保存或对比快照，请稍候");
+      return;
+    }
+    void scanAll();
+    return;
+  }
   // Let open dialogs/sheets handle their own keys (Escape, focus trap).
   if (document.querySelector('[role="dialog"], [role="alertdialog"]')) {
     return;
@@ -100,11 +117,6 @@ function onKeydown(event: KeyboardEvent) {
       event.preventDefault();
       input.focus();
     }
-    return;
-  }
-  if (event.key === "F5" && !event.repeat) {
-    event.preventDefault();
-    void scanAll();
   }
 }
 
@@ -129,7 +141,7 @@ onBeforeUnmount(() => {
         :view="view"
         :counts="counts"
         :version="appState?.version ?? '0.1.0'"
-        :is-elevated="Boolean(appState?.isElevated)"
+        :is-elevated="appState ? appState.isElevated : null"
         @update:view="setView"
       />
 
@@ -141,7 +153,13 @@ onBeforeUnmount(() => {
           :total="view === 'snapshots' ? counts.snapshots : viewItems.length"
           :query="query"
           :filter="filter"
-          :loading="currentLoading || scanning"
+          :loading="
+            currentLoading ||
+            scanning ||
+            snapshotSaving ||
+            diffLoading ||
+            (view === 'snapshots' && snapshotsLoading)
+          "
           :snapshot-saving="snapshotSaving"
           @update:query="query = $event"
           @update:filter="filter = $event"
@@ -175,6 +193,7 @@ onBeforeUnmount(() => {
               :snapshots-loading="snapshotsLoading"
               :error="snapshotsError"
               :scanning="scanning"
+              :deleting="deletingSnapshot"
               :diff="diff"
               :active-snapshot="activeSnapshot"
               :diff-loading="diffLoading"
@@ -190,9 +209,11 @@ onBeforeUnmount(() => {
               :busy-ids="busyIds"
               :selected-id="selectedId"
               :loading="currentLoading"
+              :has-filters="Boolean(query) || filter !== 'all'"
               @select="selectItem"
               @toggle="requestToggle"
               @refresh="scanAll"
+              @clear-filters="clearFilters"
             />
           </Transition>
         </div>
@@ -202,7 +223,13 @@ onBeforeUnmount(() => {
           :total="view === 'snapshots' ? counts.snapshots : viewItems.length"
           :enabled="enabledCount"
           :disabled="disabledCount"
-          :loading="currentLoading || scanning"
+          :loading="
+            currentLoading ||
+            scanning ||
+            snapshotSaving ||
+            diffLoading ||
+            (view === 'snapshots' && snapshotsLoading)
+          "
           :progress="progress"
         />
       </div>

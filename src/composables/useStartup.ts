@@ -54,6 +54,7 @@ export function useStartup() {
   const snapshotsLoading = ref(true);
   const snapshotsError = ref<string | null>(null);
   const snapshotSaving = ref(false);
+  const deletingSnapshot = ref<string | null>(null);
   const activeSnapshot = ref<string | null>(null);
   const diff = ref<SnapshotDiff | null>(null);
   const diffLoading = ref(false);
@@ -70,6 +71,7 @@ export function useStartup() {
   let scanRun = 0;
   let scanInFlight: Promise<void> | null = null;
   let diffRun = 0;
+  let snapshotRun = 0;
 
   function iconKey(item: StartupItem): string | null {
     return item.exePath ? item.exePath.toLowerCase() : null;
@@ -147,8 +149,12 @@ export function useStartup() {
           }
         }
       }
-      if (iconMap.size > ICON_CACHE_LIMIT) {
-        iconMap.clear();
+      while (iconMap.size > ICON_CACHE_LIMIT) {
+        const oldest = iconMap.keys().next().value;
+        if (oldest === undefined) {
+          break;
+        }
+        iconMap.delete(oldest);
       }
       items.value = items.value.map(attachIcon);
     } catch {
@@ -254,6 +260,12 @@ export function useStartup() {
 
   function replaceItems(next: StartupItem[]) {
     items.value = next;
+    if (
+      selectedId.value &&
+      !next.some((item) => item.id === selectedId.value)
+    ) {
+      selectedId.value = null;
+    }
   }
 
   function updateItem(next: StartupItem) {
@@ -294,6 +306,10 @@ export function useStartup() {
   }
 
   function applySnapshotList(list: SnapshotSummary[]) {
+    if (!Array.isArray(list)) {
+      snapshotsError.value = "快照列表格式异常";
+      return;
+    }
     snapshots.value = list;
     snapshotsError.value = null;
     if (
@@ -318,35 +334,37 @@ export function useStartup() {
 
     // These do not depend on the scan; start them immediately so the sidebar
     // and snapshot page do not show stale/empty state while services load.
-    const stateRequest = api.getAppState().then(
+    void api.getAppState().then(
       (value) => {
         if (run === scanRun) {
           appState.value = value;
         }
-        return { ok: true as const, value };
       },
-      (reason: unknown) => ({ ok: false as const, reason }),
+      () => {
+        // Keep the previous state; SideNav shows "权限未知" when it is null.
+      },
     );
-    const snapshotRequest = api.listSnapshots().then(
+    const snapshotToken = ++snapshotRun;
+    void api.listSnapshots().then(
       (value) => {
-        if (run === scanRun) {
+        if (run === scanRun && snapshotToken === snapshotRun) {
           applySnapshotList(value);
           snapshotsLoading.value = false;
         }
-        return { ok: true as const, value };
       },
       (reason: unknown) => {
-        if (run === scanRun) {
+        if (run === scanRun && snapshotToken === snapshotRun) {
           const apiError = reason instanceof ApiError ? reason : null;
           snapshotsError.value = apiError?.detail
             ? `${apiError.message}：${apiError.detail}`
             : (apiError?.message ?? "读取快照失败");
-          toast.error(apiError?.message ?? "读取快照失败", {
-            description: apiError?.detail ?? undefined,
-          });
+          if (view.value === "snapshots") {
+            toast.error(apiError?.message ?? "读取快照失败", {
+              description: apiError?.detail ?? undefined,
+            });
+          }
           snapshotsLoading.value = false;
         }
-        return { ok: false as const, reason };
       },
     );
 
@@ -404,15 +422,18 @@ export function useStartup() {
         return;
       }
 
-      await Promise.all([stateRequest, snapshotRequest]);
-      if (run !== scanRun) {
-        return;
-      }
     } finally {
       if (run === scanRun) {
         loading.value = false;
         servicesLoading.value = false;
         scanning.value = false;
+        if (
+          view.value === "snapshots" &&
+          activeSnapshot.value &&
+          diff.value
+        ) {
+          void loadDiff(activeSnapshot.value);
+        }
       }
     }
   }
@@ -447,7 +468,9 @@ export function useStartup() {
         description: item.name,
       });
     } catch (error) {
-      updateItem({ ...item, enabled: previous });
+      items.value = items.value.map((current) =>
+        current.id === item.id ? { ...current, enabled: previous } : current,
+      );
       const apiError = error instanceof ApiError ? error : null;
       toast.error(apiError?.message ?? "操作失败", {
         description:
@@ -462,7 +485,7 @@ export function useStartup() {
   }
 
   async function saveSnapshot() {
-    if (snapshotSaving.value || scanning.value) {
+    if (snapshotSaving.value || scanning.value || diffLoading.value) {
       return;
     }
     snapshotSaving.value = true;
@@ -472,10 +495,16 @@ export function useStartup() {
         description: `共 ${summary.count} 项，文件 ${summary.file}`,
       });
       try {
-        applySnapshotList(await api.listSnapshots());
+        const token = ++snapshotRun;
+        const list = await api.listSnapshots();
+        if (token === snapshotRun) {
+          applySnapshotList(list);
+          snapshotsLoading.value = false;
+        }
       } catch {
         // The snapshot itself was saved; keep the current list and let the
         // next refresh pick it up.
+        snapshotsLoading.value = false;
       }
     } catch (error) {
       const apiError = error instanceof ApiError ? error : null;
@@ -493,9 +522,16 @@ export function useStartup() {
     }
     snapshotsLoading.value = true;
     snapshotsError.value = null;
+    const token = ++snapshotRun;
     try {
-      applySnapshotList(await api.listSnapshots());
+      const list = await api.listSnapshots();
+      if (token === snapshotRun) {
+        applySnapshotList(list);
+      }
     } catch (error) {
+      if (token !== snapshotRun) {
+        return;
+      }
       const apiError = error instanceof ApiError ? error : null;
       snapshotsError.value = apiError?.detail
         ? `${apiError.message}：${apiError.detail}`
@@ -504,12 +540,14 @@ export function useStartup() {
         description: apiError?.detail ?? undefined,
       });
     } finally {
-      snapshotsLoading.value = false;
+      if (token === snapshotRun) {
+        snapshotsLoading.value = false;
+      }
     }
   }
 
   async function loadDiff(file: string) {
-    if (diffLoading.value || scanning.value) {
+    if (diffLoading.value || scanning.value || snapshotSaving.value) {
       return;
     }
     const run = ++diffRun;
@@ -539,8 +577,15 @@ export function useStartup() {
   }
 
   async function deleteSnapshot(file: string) {
+    if (deletingSnapshot.value) {
+      return;
+    }
+    deletingSnapshot.value = file;
     try {
       await api.deleteSnapshot(file);
+      snapshotRun += 1;
+      // Any in-flight list request is now stale; it will not reset this flag.
+      snapshotsLoading.value = false;
       if (activeSnapshot.value === file) {
         diffRun += 1;
         activeSnapshot.value = null;
@@ -556,6 +601,8 @@ export function useStartup() {
       toast.error(apiError?.message ?? "删除快照失败", {
         description: apiError?.detail ?? undefined,
       });
+    } finally {
+      deletingSnapshot.value = null;
     }
   }
 
@@ -614,8 +661,6 @@ export function useStartup() {
 
   return {
     scanning,
-    loading,
-    servicesLoading,
     currentLoading,
     errors,
     fatalError,
@@ -631,6 +676,7 @@ export function useStartup() {
     snapshotsLoading,
     snapshotsError,
     snapshotSaving,
+    deletingSnapshot,
     activeSnapshot,
     diff,
     diffLoading,

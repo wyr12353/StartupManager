@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
@@ -17,36 +17,73 @@ use windows::core::PCWSTR;
 use crate::model::StartupItem;
 use crate::util::is_remote_path;
 
-static ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-static KNOWN_PATHS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+const MAX_ICON_CACHE: usize = 512;
+const MAX_KNOWN_PATHS: usize = 4096;
+
+struct IconCache {
+    map: HashMap<String, Option<String>>,
+    order: VecDeque<String>,
+}
+
+struct KnownPaths {
+    set: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+static ICON_CACHE: OnceLock<Mutex<IconCache>> = OnceLock::new();
+static KNOWN_PATHS: OnceLock<Mutex<KnownPaths>> = OnceLock::new();
 
 fn path_key(path: &Path) -> String {
     path.to_string_lossy().to_ascii_lowercase()
 }
 
+fn icon_cache() -> &'static Mutex<IconCache> {
+    ICON_CACHE.get_or_init(|| {
+        Mutex::new(IconCache {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+        })
+    })
+}
+
+fn known_paths() -> &'static Mutex<KnownPaths> {
+    KNOWN_PATHS.get_or_init(|| {
+        Mutex::new(KnownPaths {
+            set: HashSet::new(),
+            order: VecDeque::new(),
+        })
+    })
+}
+
 /// Registers executable paths seen by a scan. The UI may only request icons
 /// for these paths, so a compromised renderer cannot probe arbitrary files.
 pub fn register_paths(items: &[StartupItem]) {
-    let known = KNOWN_PATHS.get_or_init(|| Mutex::new(HashSet::new()));
-    let Ok(mut known) = known.lock() else {
+    let Ok(mut known) = known_paths().lock() else {
         return;
     };
-    if known.len() >= 4096 {
-        known.clear();
-    }
     for item in items {
-        if let Some(path) = &item.exe_path {
-            known.insert(path_key(path));
+        let Some(path) = &item.exe_path else {
+            continue;
+        };
+        let key = path_key(path);
+        if !known.set.insert(key.clone()) {
+            continue;
+        }
+        known.order.push_back(key);
+        while known.set.len() > MAX_KNOWN_PATHS {
+            let Some(oldest) = known.order.pop_front() else {
+                break;
+            };
+            known.set.remove(&oldest);
         }
     }
 }
 
 pub fn is_known_path(path: &Path) -> bool {
-    KNOWN_PATHS
-        .get_or_init(|| Mutex::new(HashSet::new()))
+    known_paths()
         .lock()
         .ok()
-        .is_some_and(|known| known.contains(&path_key(path)))
+        .is_some_and(|known| known.set.contains(&path_key(path)))
 }
 
 /// Returns a PNG data URL for the file's shell icon. Results are cached per
@@ -56,8 +93,12 @@ pub fn data_url_for(path: &Path) -> Option<String> {
         return None;
     }
     let key = path.to_string_lossy().to_ascii_lowercase();
-    let cache = ICON_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(cached) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
+    let cache = icon_cache();
+    if let Some(cached) = cache
+        .lock()
+        .ok()
+        .and_then(|cache| cache.map.get(&key).cloned())
+    {
         return cached;
     }
 
@@ -68,12 +109,16 @@ pub fn data_url_for(path: &Path) -> Option<String> {
     // Only cache successes so a temporarily unavailable file is retried by
     // the next scan instead of staying blank until the process restarts.
     if let Some(ref icon) = value
-        && let Ok(mut map) = cache.lock()
+        && let Ok(mut cache) = cache.lock()
+        && cache.map.insert(key.clone(), Some(icon.clone())).is_none()
     {
-        if map.len() >= 512 {
-            map.clear();
+        cache.order.push_back(key);
+        while cache.map.len() > MAX_ICON_CACHE {
+            let Some(oldest) = cache.order.pop_front() else {
+                break;
+            };
+            cache.map.remove(&oldest);
         }
-        map.insert(key, Some(icon.clone()));
     }
     value
 }

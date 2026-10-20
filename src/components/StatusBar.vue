@@ -27,13 +27,16 @@ defineProps<{
       <Transition name="fade">
         <span v-if="loading" class="flex items-center gap-1 text-primary">
           <span class="size-1.5 animate-pulse rounded-full bg-primary" />
-          正在扫描
+          {{ mode === "snapshots" ? "处理中" : "正在扫描" }}
         </span>
       </Transition>
     </div>
     <div class="flex items-center gap-4">
       <Transition name="fade">
-        <span v-if="progress && loading" class="tabular-nums">
+        <span
+          v-if="progress && loading && mode === 'items'"
+          class="tabular-nums"
+        >
           {{ sourceLabel(progress.source) }} {{ progress.completed }}/{{
             progress.total
           }}

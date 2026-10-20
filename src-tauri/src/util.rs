@@ -63,7 +63,8 @@ pub fn is_remote_path(path: &Path) -> bool {
         .to_string_lossy()
         .replace('/', "\\")
         .to_ascii_lowercase();
-    if value.starts_with(r"\\.\")
+    if is_remote_drive(&value)
+        || value.starts_with(r"\\.\")
         || value.starts_with(r"\\?\globalroot\")
         || value.starts_with(r"\\?\volume")
     {
@@ -73,6 +74,19 @@ pub fn is_remote_path(path: &Path) -> bool {
         Some(rest) => rest.starts_with("unc\\"),
         None => value.starts_with(r"\\"),
     }
+}
+
+fn is_remote_drive(value: &str) -> bool {
+    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    use windows::Win32::System::WindowsProgramming::DRIVE_REMOTE;
+    use windows::core::PCWSTR;
+
+    let bytes = value.as_bytes();
+    if bytes.len() < 2 || bytes[1] != b':' || !bytes[0].is_ascii_alphabetic() {
+        return false;
+    }
+    let root = [bytes[0] as u16, ':' as u16, '\\' as u16, 0];
+    unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) == DRIVE_REMOTE }
 }
 
 /// Decodes a REG_SZ / REG_EXPAND_SZ value. Returns `None` for other types and

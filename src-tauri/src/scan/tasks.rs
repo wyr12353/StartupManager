@@ -68,8 +68,9 @@ unsafe fn read_current_user(token: HANDLE) -> Option<CurrentUser> {
 
     let mut sid_ptr = PWSTR::null();
     unsafe { ConvertSidToStringSidW(sid, &mut sid_ptr) }.ok()?;
-    let sid_string = unsafe { sid_ptr.to_string() }.ok()?;
+    let sid_string = unsafe { sid_ptr.to_string() };
     let _ = unsafe { LocalFree(Some(HLOCAL(sid_ptr.0.cast()))) };
+    let sid_string = sid_string.ok()?;
 
     let mut name_len = 0u32;
     let mut domain_len = 0u32;
@@ -90,13 +91,18 @@ unsafe fn read_current_user(token: HANDLE) -> Option<CurrentUser> {
     } else {
         let mut name_buf = vec![0u16; name_len as usize];
         let mut domain_buf = vec![0u16; domain_len as usize];
+        let domain_arg = if domain_len == 0 {
+            None
+        } else {
+            Some(PWSTR(domain_buf.as_mut_ptr()))
+        };
         let looked_up = unsafe {
             LookupAccountSidW(
                 PCWSTR::null(),
                 sid,
                 Some(PWSTR(name_buf.as_mut_ptr())),
                 &mut name_len,
-                Some(PWSTR(domain_buf.as_mut_ptr())),
+                domain_arg,
                 &mut domain_len,
                 &mut use_type,
             )

@@ -48,7 +48,7 @@ pub fn save(items: Vec<StartupItem>) -> AppResult<SnapshotSummary> {
     paths::ensure_dirs();
     let now = chrono::Local::now();
     let created_at = now.to_rfc3339();
-    let file_name = format!("snapshot-{}.json", now.format("%Y%m%d-%H%M%S%3f"));
+    let file_name = format!("snapshot-{}.json", now.format("%Y%m%d-%H%M%S%9f"));
     let document = SnapshotDocument {
         version: env!("CARGO_PKG_VERSION").to_string(),
         created_at: created_at.clone(),

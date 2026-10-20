@@ -91,20 +91,43 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```powershell
 cargo run --manifest-path src-tauri/Cargo.toml -- --selftest
 cargo run --manifest-path src-tauri/Cargo.toml -- --scan-json
+powershell -ExecutionPolicy Bypass -File tools/verify.ps1
 ```
 
-打包（NSIS，perMachine）：
+图标源文件为 `assets/icon.svg`；修改后运行 `npx tauri icon assets/icon.svg` 重新生成 `src-tauri/icons/` 下的 Windows 图标。
+
+打包（NSIS + MSI，perMachine）：
 
 ```powershell
 npm run tauri build
 ```
 
-构建产物位于 `src-tauri/target/release/` 和 `src-tauri/target/release/bundle/nsis/`。NSIS 安装包按 `productName` 生成，实际文件名是 `启动项管理器_0.1.0_x64-setup.exe`；复制到 `release/` 时重命名为下面的英文名，并重新生成 `SHA256SUMS.txt`。也可以直接运行 `powershell -ExecutionPolicy Bypass -File tools/release.ps1` 自动完成构建、复制、重命名和哈希生成。
+构建产物位于 `src-tauri/target/release/bundle/nsis/` 和 `src-tauri/target/release/bundle/msi/`。NSIS 安装包按 `productName` 生成，实际文件名是 `启动项管理器_0.1.0_x64-setup.exe`；MSI 实际文件名是 `启动项管理器_0.1.0_x64_zh-CN.msi`。复制到 `release/` 时重命名为下面的英文名，并重新生成 `SHA256SUMS.txt`。也可以直接运行 `powershell -ExecutionPolicy Bypass -File tools/release.ps1` 自动完成版本校验、构建、复制、重命名和哈希生成。
 
 - `StartupManager_0.1.0_x64-setup.exe`（NSIS 安装包，perMachine）
 - `StartupManager_0.1.0_x64.msi`（MSI 安装包，WiX）
 - `StartupManager.exe`（免安装可执行文件，需要系统 WebView2）
 - `SHA256SUMS.txt`
+
+校验下载产物：
+
+```powershell
+Get-FileHash .\release\StartupManager.exe -Algorithm SHA256
+Get-Content .\release\SHA256SUMS.txt
+```
+
+或在 Git Bash 中：
+
+```bash
+cd release && sha256sum -c SHA256SUMS.txt
+```
+
+MSI 为 per-machine 安装，安装/卸载需要管理员授权：
+
+```powershell
+msiexec /i StartupManager_0.1.0_x64.msi
+msiexec /x StartupManager_0.1.0_x64.msi
+```
 
 `release/`、`dist/`、`.ui-dump/` 都是本地构建/验收产物，已在 `.gitignore` 中忽略，不随仓库提交。`dist/` 是前端构建输出，不是发布目录。
 
@@ -125,7 +148,7 @@ npm run tauri build
 - 服务列表只读，显示自动启动的 Win32 服务；驱动与内核服务不在列表中。
 - UWP 启动任务只覆盖当前用户，显示名暂时使用包族名/TaskId。
 - 签名验证只验证嵌入的 Authenticode 签名；系统文件常用的 catalog 签名会显示“签名未验证”；摘要不匹配、证书过期或链不受信会显示“签名无效”；UNC/设备路径跳过签名与版本查询。
-- 快照文件名带毫秒，写入采用临时文件 + 改名；列表按解析后的时间排序。
+- 快照文件名带纳秒时间戳，写入采用临时文件 + 改名；列表按解析后的时间排序。
 - 启动项数量通常不大，表格未做虚拟滚动；服务较多时建议用搜索/筛选。
 - 未做代码签名，首次运行可能出现 SmartScreen 提示；发布前建议使用 OV/EV 证书签名。
 
@@ -140,3 +163,7 @@ npm run tauri build
 ## 验收
 
 写操作验收请使用虚拟机快照，不要在主力机上直接操作真实启动项。完整矩阵见 [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)。
+
+## 许可证
+
+MIT，详见 [LICENSE](LICENSE)。

@@ -36,12 +36,14 @@ defineProps<{
   busyIds: Set<string>;
   selectedId: string | null;
   loading: boolean;
+  hasFilters: boolean;
 }>();
 
 const emit = defineEmits<{
   (event: "select", item: StartupItem): void;
   (event: "toggle", item: StartupItem, enabled: boolean): void;
   (event: "refresh"): void;
+  (event: "clear-filters"): void;
 }>();
 
 function iconFor(source: SourceKind) {
@@ -79,10 +81,14 @@ function iconFor(source: SourceKind) {
       <EmptyState
         v-else-if="items.length === 0"
         key="empty"
-        title="没有匹配的启动项"
-        description="换个关键词或筛选条件试试，也可以重新扫描一次。"
-        action-label="重新扫描"
-        @action="emit('refresh')"
+        :title="hasFilters ? '没有匹配的启动项' : '没有找到启动项'"
+        :description="
+          hasFilters
+            ? '换个关键词，或清除搜索和筛选条件。'
+            : '可以重新扫描一次，或检查当前来源是否可读。'
+        "
+        :action-label="hasFilters ? '清除搜索和筛选' : '重新扫描'"
+        @action="hasFilters ? emit('clear-filters') : emit('refresh')"
       />
 
       <Table v-else key="table" class="w-full table-fixed">
@@ -101,7 +107,6 @@ function iconFor(source: SourceKind) {
           :key="item.id"
           class="h-16 cursor-pointer animate-in fade-in duration-150"
           :class="selectedId === item.id ? 'bg-muted/60' : ''"
-          :aria-selected="selectedId === item.id"
           @click="emit('select', item)"
         >
           <TableCell class="pl-5 pr-4">
@@ -122,6 +127,9 @@ function iconFor(source: SourceKind) {
                 <button
                   type="button"
                   class="block w-full truncate text-left text-[15px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  :aria-current="
+                    selectedId === item.id ? 'true' : undefined
+                  "
                   @click.stop="emit('select', item)"
                 >
                   {{ item.name }}

@@ -7,15 +7,15 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const filePath = (relative) => join(root, relative);
 const read = (relative) => readFileSync(filePath(relative), "utf8");
 const results = [];
+const updates = [];
 
-function writeIfChanged(relative, next) {
-  const file = filePath(relative);
-  const current = readFileSync(file, "utf8");
+function plan(relative, next) {
+  const current = readFileSync(filePath(relative), "utf8");
   if (current === next) {
     results.push(["unchanged", relative]);
     return;
   }
-  writeFileSync(file, next);
+  updates.push([relative, next]);
   results.push(["updated", relative]);
 }
 
@@ -63,8 +63,8 @@ function replaceCargoLockVersion(text, value) {
 function replaceReadmeVersions(text, value) {
   const artifactRe = /(?:启动项管理器|StartupManager)_\d+\.\d+\.\d+_x64(?:-setup\.exe|\.msi)/g;
   const matches = [...text.matchAll(artifactRe)];
-  if (matches.length !== 3) {
-    throw new Error(`README.md 期望 3 处产物文件名，实际 ${matches.length} 处`);
+  if (matches.length < 3) {
+    throw new Error(`README.md 至少需要 3 处产物文件名，实际 ${matches.length} 处`);
   }
   return text.replace(artifactRe, (match) =>
     match.replace(/_\d+\.\d+\.\d+(_x64(?:-setup\.exe|\.msi))/, `_${value}$1`),
@@ -85,13 +85,13 @@ function main() {
   const previous = pkg.version;
   const version = requested ?? previous;
 
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    throw new Error(`版本号不合法: ${version}`);
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`版本号必须是 X.Y.Z 格式: ${version}`);
   }
 
   if (requested && version !== previous) {
     pkg.version = version;
-    writeIfChanged("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
+    plan("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
   } else {
     results.push(["unchanged", "package.json"]);
   }
@@ -102,23 +102,29 @@ function main() {
   }
   lock.version = version;
   lock.packages[""].version = version;
-  writeIfChanged("package-lock.json", `${JSON.stringify(lock, null, 2)}\n`);
+  plan("package-lock.json", `${JSON.stringify(lock, null, 2)}\n`);
 
-  writeIfChanged(
+  plan(
     "src-tauri/Cargo.toml",
     replaceSectionValue(read("src-tauri/Cargo.toml"), "package", "version", version),
   );
-  writeIfChanged(
+  plan(
     "src-tauri/Cargo.lock",
     replaceCargoLockVersion(read("src-tauri/Cargo.lock"), version),
   );
 
   const tauri = JSON.parse(read("src-tauri/tauri.conf.json"));
   tauri.version = version;
-  writeIfChanged("src-tauri/tauri.conf.json", `${JSON.stringify(tauri, null, 2)}\n`);
+  plan("src-tauri/tauri.conf.json", `${JSON.stringify(tauri, null, 2)}\n`);
 
-  writeIfChanged("README.md", replaceReadmeVersions(read("README.md"), version));
-  writeIfChanged("src/App.vue", replaceAppVersion(read("src/App.vue"), version));
+  plan("README.md", replaceReadmeVersions(read("README.md"), version));
+  plan("src/App.vue", replaceAppVersion(read("src/App.vue"), version));
+
+  // All replacements parsed successfully; commit them together so a failed
+  // regex cannot leave the repository half-synced.
+  for (const [relative, next] of updates) {
+    writeFileSync(filePath(relative), next);
+  }
 
   for (const [state, file] of results) {
     console.log(`${state} ${file}`);

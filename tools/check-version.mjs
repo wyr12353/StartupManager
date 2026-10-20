@@ -101,10 +101,10 @@ check("src-tauri/tauri.conf.json version", tauri.version);
 const readme = read("README.md");
 const artifactRe = /(?:启动项管理器|StartupManager)_\d+\.\d+\.\d+_x64(?:-setup\.exe|\.msi)/g;
 const artifacts = [...readme.matchAll(artifactRe)];
-if (artifacts.length !== 3) {
+if (artifacts.length < 3) {
   errors.push({
     label: "README.md artifacts",
-    message: `期望 3 处产物文件名，实际 ${artifacts.length} 处`,
+    message: `至少需要 3 处产物文件名，实际 ${artifacts.length} 处`,
   });
 } else {
   for (const artifact of artifacts) {

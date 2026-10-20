@@ -14,10 +14,15 @@ pub(crate) fn scan_with(metadata: bool, resolve_links: bool) -> ScanResult {
     let mut items = Vec::new();
     let mut errors = Vec::new();
 
-    let user_dir = std::env::var_os("APPDATA")
-        .map(|root| PathBuf::from(root).join(r"Microsoft\Windows\Start Menu\Programs\Startup"));
-    let common_dir = std::env::var_os("PROGRAMDATA")
-        .map(|root| PathBuf::from(root).join(r"Microsoft\Windows\Start Menu\Programs\Startup"));
+    use windows::Win32::UI::Shell::{FOLDERID_ProgramData, FOLDERID_RoamingAppData};
+
+    let startup = r"Microsoft\Windows\Start Menu\Programs\Startup";
+    let user_dir = crate::util::known_folder_path(&FOLDERID_RoamingAppData)
+        .or_else(|| std::env::var_os("APPDATA").map(PathBuf::from))
+        .map(|root| root.join(startup));
+    let common_dir = crate::util::known_folder_path(&FOLDERID_ProgramData)
+        .or_else(|| std::env::var_os("PROGRAMDATA").map(PathBuf::from))
+        .map(|root| root.join(startup));
 
     for (dir, hive, scope) in [
         (user_dir, Hive::Hkcu, Scope::CurrentUser),

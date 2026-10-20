@@ -16,7 +16,7 @@ defineProps<{
   view: ViewKind;
   counts: Record<ViewKind, number>;
   version: string;
-  isElevated: boolean;
+  isElevated: boolean | null;
 }>();
 
 const emit = defineEmits<{
@@ -80,13 +80,19 @@ const navItems = [
       <div class="flex items-center gap-2 text-[14px] text-muted-foreground">
         <Transition name="icon-swap" mode="out-in">
           <ShieldCheckIcon
-            v-if="isElevated"
+            v-if="isElevated === true"
             key="admin"
             class="size-4 text-success"
           />
           <ShieldAlertIcon v-else key="standard" class="size-4 text-warning" />
         </Transition>
-        <span>{{ isElevated ? "管理员权限" : "标准权限" }}</span>
+        <span>{{
+          isElevated === null
+            ? "权限未知"
+            : isElevated
+              ? "管理员权限"
+              : "标准权限"
+        }}</span>
       </div>
       <div class="text-[12px] text-muted-foreground/70">版本 {{ version }}</div>
     </div>

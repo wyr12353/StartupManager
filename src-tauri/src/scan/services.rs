@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY};
 
 use crate::model::{ScanResult, Scope, SignatureStatus, SourceKind, StartupItem};
@@ -62,7 +60,10 @@ pub(crate) fn scan_with(metadata: bool) -> ScanResult {
             if path.is_absolute() {
                 path
             } else {
-                system32_dir().join(path)
+                // Non-fully-qualified ImagePath values are relative to the
+                // Windows directory according to CreateService semantics.
+                let relative = path.to_string_lossy();
+                crate::util::windows_dir().join(relative.trim_start_matches('\\'))
             }
         });
         let publisher = if metadata {
@@ -129,10 +130,6 @@ fn normalize_image_path(raw: &str) -> String {
     expand_env(&value)
 }
 
-fn system32_dir() -> PathBuf {
-    crate::util::windows_dir().join("System32")
-}
-
 fn resolve_indirect_string(raw: String) -> String {
     if !raw.starts_with('@') {
         return raw;
@@ -141,7 +138,7 @@ fn resolve_indirect_string(raw: String) -> String {
     use windows::core::PCWSTR;
 
     let wide: Vec<u16> = raw.encode_utf16().chain(std::iter::once(0)).collect();
-    let mut output = vec![0u16; 512];
+    let mut output = vec![0u16; 8192];
     let ok = unsafe { SHLoadIndirectString(PCWSTR(wide.as_ptr()), &mut output, None) };
     if ok.is_ok() {
         let text = String::from_utf16_lossy(&output)
