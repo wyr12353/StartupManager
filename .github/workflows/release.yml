@@ -12,23 +12,30 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
 
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
+      - name: Add Windows SDK resource compiler
+        shell: pwsh
+        run: |
+          $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+          $sdk = Get-ChildItem $sdkRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $rcDir = Join-Path $sdk.FullName 'x64'
+          if (-not (Test-Path (Join-Path $rcDir 'rc.exe'))) {
+            throw "rc.exe not found in $rcDir"
+          }
+          $rcDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.99.1
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2.9.2
 
       - name: Install dependencies
         run: npm ci
@@ -38,7 +45,7 @@ jobs:
         run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/release.ps1
 
       - name: Publish release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             release/StartupManager.exe
