@@ -140,7 +140,7 @@ onBeforeUnmount(() => {
       <SideNav
         :view="view"
         :counts="counts"
-        :version="appState?.version ?? '0.1.0'"
+        :version="appState?.version ?? '0.1.1'"
         :is-elevated="appState ? appState.isElevated : null"
         @update:view="setView"
       />

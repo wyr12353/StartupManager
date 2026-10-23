@@ -1,6 +1,6 @@
 [package]
 name = "startupmanager"
-version = "0.1.0"
+version = "0.1.1"
 description = "Windows 启动项管理器"
 authors = ["wyr12353"]
 edition = "2024"

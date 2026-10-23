@@ -28,8 +28,8 @@ Windows 平台轻量、可逆的现代化启动项管理工具。
 | 文件 | 说明 |
 | :--- | :--- |
 | **`StartupManager.exe`** | 便携免安装版，双击直接运行 |
-| **`StartupManager_0.1.0_x64-setup.exe`** | 常用安装向导包（自动创建快捷方式） |
-| **`StartupManager_0.1.0_x64.msi`** | 企业/静默分发安装包 |
+| **`StartupManager_0.1.1_x64-setup.exe`** | 常用安装向导包（自动创建快捷方式） |
+| **`StartupManager_0.1.1_x64.msi`** | 企业/静默分发安装包 |
 
 > 💡 **系统要求**：Windows 10 / Windows 11（需要系统内置 WebView2 运行时，Win11 已默认内置）。
 

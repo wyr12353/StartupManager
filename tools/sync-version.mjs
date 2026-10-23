@@ -63,8 +63,10 @@ function replaceCargoLockVersion(text, value) {
 function replaceReadmeVersions(text, value) {
   const artifactRe = /(?:启动项管理器|StartupManager)_\d+\.\d+\.\d+_x64(?:-setup\.exe|\.msi)/g;
   const matches = [...text.matchAll(artifactRe)];
-  if (matches.length < 3) {
-    throw new Error(`README.md 至少需要 3 处产物文件名，实际 ${matches.length} 处`);
+  // Only the installer and MSI carry a version in their filenames (the
+  // portable exe does not), matching check-version.mjs.
+  if (matches.length < 2) {
+    throw new Error(`README.md 至少需要 2 处产物文件名，实际 ${matches.length} 处`);
   }
   return text.replace(artifactRe, (match) =>
     match.replace(/_\d+\.\d+\.\d+(_x64(?:-setup\.exe|\.msi))/, `_${value}$1`),
