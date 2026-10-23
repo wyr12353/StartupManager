@@ -59,6 +59,18 @@ pub fn publisher_for(path: &Path) -> Option<String> {
     value
 }
 
+/// Publisher and signature status for a scanned executable. `metadata` is
+/// false during snapshot re-scans, where only raw items are needed.
+pub fn describe(exe_path: Option<&Path>, metadata: bool) -> (Option<String>, SignatureStatus) {
+    if !metadata {
+        return (None, SignatureStatus::Unknown);
+    }
+    (
+        exe_path.and_then(publisher_for),
+        exe_path.map(verify).unwrap_or(SignatureStatus::Unknown),
+    )
+}
+
 fn version_string(path: &Path, key: &str) -> Option<String> {
     use windows::Win32::Storage::FileSystem::{
         GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,

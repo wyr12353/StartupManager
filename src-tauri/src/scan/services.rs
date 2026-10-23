@@ -1,6 +1,6 @@
 use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY};
 
-use crate::model::{ScanResult, Scope, SignatureStatus, SourceKind, StartupItem};
+use crate::model::{ScanResult, Scope, SourceKind, StartupItem};
 use crate::signature;
 use crate::util::{decode_reg_string, expand_env, make_id, parse_executable};
 
@@ -12,6 +12,7 @@ pub fn scan() -> ScanResult {
 
 pub(crate) fn scan_with(metadata: bool) -> ScanResult {
     let mut items = Vec::new();
+    let mut errors = Vec::new();
 
     let root = match winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
         .open_subkey_with_flags(SERVICES_KEY, KEY_READ | KEY_WOW64_64KEY)
@@ -30,12 +31,24 @@ pub(crate) fn scan_with(metadata: bool) -> ScanResult {
         let Ok(name) = entry else {
             continue;
         };
-        let Ok(key) = root.open_subkey_with_flags(&name, KEY_READ | KEY_WOW64_64KEY) else {
-            continue;
+        // A skipped key must be reported: snapshot completeness relies on this
+        // error field, and a silent gap would make a missing service look like
+        // a "removed" item in the diff.
+        let key = match root.open_subkey_with_flags(&name, KEY_READ | KEY_WOW64_64KEY) {
+            Ok(key) => key,
+            Err(err) => {
+                errors.push(format!("{name}: 无法打开服务子键（{err}）"));
+                continue;
+            }
         };
-
-        let Ok(start) = key.get_value::<u32, _>("Start") else {
-            continue;
+        let start = match key.get_value::<u32, _>("Start") {
+            Ok(start) => start,
+            // Subkeys without Start are registry artifacts, not services.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                errors.push(format!("{name}: 无法读取启动类型（{err}）"));
+                continue;
+            }
         };
         if !matches!(start, 0..=2) {
             continue;
@@ -66,19 +79,7 @@ pub(crate) fn scan_with(metadata: bool) -> ScanResult {
                 crate::util::windows_dir().join(relative.trim_start_matches('\\'))
             }
         });
-        let publisher = if metadata {
-            exe_path.as_deref().and_then(signature::publisher_for)
-        } else {
-            None
-        };
-        let signature_status = if metadata {
-            exe_path
-                .as_deref()
-                .map(signature::verify)
-                .unwrap_or(SignatureStatus::Unknown)
-        } else {
-            SignatureStatus::Unknown
-        };
+        let (publisher, signature_status) = signature::describe(exe_path.as_deref(), metadata);
 
         let mut warnings = vec!["服务列表只读，暂不支持修改".to_string()];
         if delayed {
@@ -112,7 +113,11 @@ pub(crate) fn scan_with(metadata: bool) -> ScanResult {
     ScanResult {
         source: SourceKind::Service,
         items,
-        error: None,
+        error: if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("；"))
+        },
     }
 }
 

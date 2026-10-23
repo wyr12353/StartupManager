@@ -9,9 +9,10 @@ use interprocess::local_socket::{
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Pipes::PeekNamedPipe;
-use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::System::Threading::WaitForSingleObject;
+use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 use windows::core::{PCWSTR, PWSTR};
 
@@ -71,6 +72,28 @@ const IPC_TIMEOUT: Duration = Duration::from_secs(30);
 const IPC_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MAX_IPC_LINE: usize = 1024 * 1024;
+
+/// Owns the helper process handle returned by `ShellExecuteExW`.
+struct ProcessHandle(HANDLE);
+
+impl ProcessHandle {
+    fn has_exited(&self) -> bool {
+        if self.0.is_invalid() {
+            return false;
+        }
+        unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
+    }
+}
+
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        if !self.0.is_invalid() {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+}
 
 fn ipc_timeout(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::TimedOut, message)
@@ -318,24 +341,35 @@ pub fn request_set_enabled(item: &StartupItem, enabled: bool) -> AppResult<()> {
         .collect();
     let parameters: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
 
-    let launch = unsafe {
-        ShellExecuteW(
-            None,
-            PCWSTR(verb.as_ptr()),
-            PCWSTR(file.as_ptr()),
-            PCWSTR(parameters.as_ptr()),
-            None,
-            SW_HIDE,
-        )
+    let mut execute_info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(parameters.as_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
     };
-    let launch_code = launch.0 as isize;
-    if launch_code <= 32 {
-        return Err(AppError::elevation_cancelled()
-            .with_detail(format!("ShellExecuteW 返回 {launch_code}")));
+    let launch = unsafe { ShellExecuteExW(&mut execute_info) };
+    if let Err(err) = launch {
+        return Err(
+            AppError::elevation_cancelled().with_detail(format!("ShellExecuteExW 失败：{err}"))
+        );
     }
+    // With `runas` this call blocks until the UAC prompt is answered, so a
+    // successful return means the helper process exists. Keep its handle to
+    // detect a helper that crashes before it can connect, instead of waiting
+    // out the full elevation timeout.
+    let helper_process = ProcessHandle(execute_info.hProcess);
 
     let accept_deadline = Instant::now() + ELEVATION_TIMEOUT;
     let mut connection = loop {
+        if helper_process.has_exited() {
+            return Err(AppError::new(
+                "ELEVATION_FAILED",
+                "提权进程已退出，未能连接授权通道",
+            ));
+        }
         match listener.accept() {
             Ok(connection) => break connection,
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => {

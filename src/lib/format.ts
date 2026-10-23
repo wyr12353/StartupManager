@@ -44,8 +44,6 @@ export function signatureLabel(status: SignatureStatus): string {
   switch (status) {
     case "verified":
       return "签名有效";
-    case "unsigned":
-      return "未签名";
     case "invalid":
       return "签名无效";
     case "unknown":

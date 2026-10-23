@@ -36,12 +36,8 @@ pub fn overlay_subkey(view: RegView) -> &'static str {
 /// StartupApproved is always stored in the 64-bit view. Explorer keeps the
 /// 32-bit Run overrides in `...\StartupApproved\Run32`, not in
 /// `WOW6432Node\...\StartupApproved\Run32`.
-pub fn read_state(hive: Hive, subkey: &str, value_name: &str) -> ApprovedState {
-    read_state_opt(hive, subkey, value_name).unwrap_or(ApprovedState::Enabled)
-}
-
-/// Like `read_state_opt`, but distinguishes "missing value" from a read error
-/// so callers can show a warning instead of silently reporting "enabled".
+/// Distinguishes "missing value" from a read error so callers can show a
+/// warning instead of silently reporting "enabled".
 pub fn try_read_state_opt(
     hive: Hive,
     subkey: &str,
@@ -51,10 +47,6 @@ pub fn try_read_state_opt(
         Some(bytes) => Ok(Some(parse_blob(&bytes))),
         None => Ok(None),
     }
-}
-
-pub fn read_state_opt(hive: Hive, subkey: &str, value_name: &str) -> Option<ApprovedState> {
-    try_read_state_opt(hive, subkey, value_name).ok().flatten()
 }
 
 fn read_blob(hive: Hive, subkey: &str, value_name: &str) -> AppResult<Option<Vec<u8>>> {

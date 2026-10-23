@@ -18,7 +18,7 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::core::{BSTR, GUID, Interface, PCWSTR, PWSTR};
 
 use crate::error::{AppError, AppResult};
-use crate::model::{ActionRef, ScanResult, Scope, SignatureStatus, SourceKind, StartupItem};
+use crate::model::{ActionRef, ScanResult, Scope, SourceKind, StartupItem};
 use crate::signature;
 use crate::util::{make_id, parse_executable};
 
@@ -377,19 +377,7 @@ fn task_to_item(task: &IRegisteredTask, metadata: bool) -> Result<Option<Startup
         warnings.push("系统任务，工具不会修改".to_string());
     }
 
-    let publisher = if metadata {
-        exe_path.as_deref().and_then(signature::publisher_for)
-    } else {
-        None
-    };
-    let signature_status = if metadata {
-        exe_path
-            .as_deref()
-            .map(signature::verify)
-            .unwrap_or(SignatureStatus::Unknown)
-    } else {
-        SignatureStatus::Unknown
-    };
+    let (publisher, signature_status) = signature::describe(exe_path.as_deref(), metadata);
     Ok(Some(StartupItem {
         // Keep the ID scope stable so existing snapshots still match; the
         // user-facing `scope` below reflects the real principal.

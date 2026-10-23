@@ -69,6 +69,9 @@ pub fn register_paths(items: &[StartupItem]) {
         if !known.set.insert(key.clone()) {
             continue;
         }
+        // Same eviction/re-insertion concern as the icon cache: a stale slot
+        // in `order` could evict a live entry from `set`.
+        known.order.retain(|entry| entry != &key);
         known.order.push_back(key);
         while known.set.len() > MAX_KNOWN_PATHS {
             let Some(oldest) = known.order.pop_front() else {
@@ -110,8 +113,11 @@ pub fn data_url_for(path: &Path) -> Option<String> {
     // the next scan instead of staying blank until the process restarts.
     if let Some(ref icon) = value
         && let Ok(mut cache) = cache.lock()
-        && cache.map.insert(key.clone(), Some(icon.clone())).is_none()
     {
+        // A key re-inserted after eviction keeps a stale slot in `order`;
+        // drop it so the queue cannot outgrow (or desync with) the map.
+        cache.order.retain(|entry| entry != &key);
+        cache.map.insert(key.clone(), Some(icon.clone()));
         cache.order.push_back(key);
         while cache.map.len() > MAX_ICON_CACHE {
             let Some(oldest) = cache.order.pop_front() else {
@@ -184,8 +190,12 @@ fn extract_icon_png(path: &Path) -> Option<Vec<u8>> {
         mask: icon_info.hbmMask,
         dc: unsafe { CreateCompatibleDC(None) },
     };
-    if resources.dc.is_invalid() || resources.color.0.is_null() {
+    if resources.dc.is_invalid() {
         return None;
+    }
+    if resources.color.0.is_null() {
+        // Mask-only (monochrome) icons have no color bitmap.
+        return monochrome_icon_png(&resources);
     }
 
     let mut bitmap = BITMAP::default();
@@ -282,6 +292,87 @@ fn extract_icon_png(path: &Path) -> Option<Vec<u8>> {
             } else if !has_alpha {
                 pixels[index + 3] = 255;
             }
+        }
+    }
+
+    let mut png_bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut png_bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(&pixels).ok()?;
+    }
+    Some(png_bytes)
+}
+
+/// Renders a monochrome icon from its mask bitmap. A color-less icon stores
+/// the black/white image in the top half of `hbmMask` and the AND (transparency)
+/// plane in the bottom half.
+fn monochrome_icon_png(resources: &GdiResources) -> Option<Vec<u8>> {
+    if resources.mask.0.is_null() {
+        return None;
+    }
+
+    let mut bitmap = BITMAP::default();
+    let copied = unsafe {
+        GetObjectW(
+            HGDIOBJ(resources.mask.0),
+            std::mem::size_of::<BITMAP>() as i32,
+            Some(&mut bitmap as *mut BITMAP as *mut c_void),
+        )
+    };
+    if copied == 0 || bitmap.bmWidth <= 0 || bitmap.bmHeight < 2 {
+        return None;
+    }
+
+    let width = bitmap.bmWidth as u32;
+    let full_height = bitmap.bmHeight as u32;
+    let height = full_height / 2;
+    let stride = width.div_ceil(32) * 4;
+
+    let mut bits = vec![0u8; stride as usize * full_height as usize];
+    let mut mask_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width as i32,
+            biHeight: -(full_height as i32),
+            biPlanes: 1,
+            biBitCount: 1,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let lines = unsafe {
+        GetDIBits(
+            resources.dc,
+            resources.mask,
+            0,
+            full_height,
+            Some(bits.as_mut_ptr().cast()),
+            &mut mask_info,
+            DIB_RGB_COLORS,
+        )
+    };
+    if lines == 0 {
+        return None;
+    }
+
+    // A 1bpp DIB maps bit 0 to black and bit 1 to white; a set AND bit means
+    // the pixel is transparent.
+    let mut pixels = vec![0u8; width as usize * height as usize * 4];
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let index = (y * width as usize + x) * 4;
+            let shift = 7 - (x % 8);
+            let xor_bit = bits[y * stride as usize + x / 8] >> shift & 1;
+            let and_bit = bits[(y + height as usize) * stride as usize + x / 8] >> shift & 1;
+            let value = if xor_bit != 0 { 255 } else { 0 };
+            pixels[index] = value;
+            pixels[index + 1] = value;
+            pixels[index + 2] = value;
+            pixels[index + 3] = if and_bit != 0 { 0 } else { 255 };
         }
     }
 

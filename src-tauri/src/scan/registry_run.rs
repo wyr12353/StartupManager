@@ -1,9 +1,7 @@
 use winreg::enums::{KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
 
 use crate::error::AppError;
-use crate::model::{
-    ActionRef, Hive, RegView, ScanResult, Scope, SignatureStatus, SourceKind, StartupItem,
-};
+use crate::model::{ActionRef, Hive, RegView, ScanResult, Scope, SourceKind, StartupItem};
 use crate::signature;
 use crate::startup_approved::{self, ApprovedState};
 use crate::util::{decode_reg_string, make_id, parse_executable};
@@ -141,19 +139,7 @@ fn scan_key(
             Scope::AllUsers
         };
         let locator = format!("{}\\{}|{}", hive.label(), subkey, raw_name);
-        let publisher = if metadata {
-            exe_path.as_deref().and_then(signature::publisher_for)
-        } else {
-            None
-        };
-        let signature_status = if metadata {
-            exe_path
-                .as_deref()
-                .map(signature::verify)
-                .unwrap_or(SignatureStatus::Unknown)
-        } else {
-            SignatureStatus::Unknown
-        };
+        let (publisher, signature_status) = signature::describe(exe_path.as_deref(), metadata);
         items.push(StartupItem {
             id: make_id(SourceKind::RegistryRun, scope, Some(view), &locator),
             name,

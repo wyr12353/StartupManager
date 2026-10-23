@@ -4,7 +4,9 @@ use winreg::enums::HKEY_CURRENT_USER;
 use crate::model::{ActionRef, ScanResult, Scope, SignatureStatus, SourceKind, StartupItem};
 use crate::util::make_id;
 
-const APP_MODEL: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
+/// Per-package StartupTask state storage under HKCU. Shared with `action.rs`,
+/// which writes the State value for a specific task.
+pub(crate) const APP_MODEL: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
 
 pub fn scan() -> ScanResult {
     let mut items = Vec::new();

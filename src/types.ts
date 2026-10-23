@@ -7,7 +7,7 @@ export type SourceKind =
 
 export type Scope = "currentUser" | "allUsers";
 export type RegView = "64" | "32";
-export type SignatureStatus = "verified" | "unsigned" | "invalid" | "unknown";
+export type SignatureStatus = "verified" | "invalid" | "unknown";
 
 export interface StartupItem {
   id: string;

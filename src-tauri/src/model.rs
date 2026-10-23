@@ -30,7 +30,6 @@ pub enum RegView {
 #[serde(rename_all = "camelCase")]
 pub enum SignatureStatus {
     Verified,
-    Unsigned,
     Invalid,
     Unknown,
 }

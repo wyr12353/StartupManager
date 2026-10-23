@@ -27,26 +27,35 @@ fn clean_start(root: &'static str) -> Cleanup {
     Cleanup(root)
 }
 
+/// Same semantics the old library helper had: a missing value reads as
+/// "enabled" so Explorer's default holds.
+fn read_state(hive: Hive, subkey: &str, value_name: &str) -> ApprovedState {
+    startup_approved::try_read_state_opt(hive, subkey, value_name)
+        .ok()
+        .flatten()
+        .unwrap_or(ApprovedState::Enabled)
+}
+
 #[test]
 fn startup_approved_state_roundtrip() {
     let _cleanup = clean_start(STATE_ROOT);
     let subkey = format!(r"{STATE_ROOT}\StartupApproved\Run");
 
     assert_eq!(
-        startup_approved::read_state(Hive::Hkcu, &subkey, "Roundtrip"),
+        read_state(Hive::Hkcu, &subkey, "Roundtrip"),
         ApprovedState::Enabled,
         "missing value means enabled"
     );
 
     startup_approved::write_state(Hive::Hkcu, &subkey, "Roundtrip", false).expect("disable");
     assert_eq!(
-        startup_approved::read_state(Hive::Hkcu, &subkey, "Roundtrip"),
+        read_state(Hive::Hkcu, &subkey, "Roundtrip"),
         ApprovedState::Disabled
     );
 
     startup_approved::write_state(Hive::Hkcu, &subkey, "Roundtrip", true).expect("enable");
     assert_eq!(
-        startup_approved::read_state(Hive::Hkcu, &subkey, "Roundtrip"),
+        read_state(Hive::Hkcu, &subkey, "Roundtrip"),
         ApprovedState::Enabled
     );
 }
@@ -79,13 +88,13 @@ fn action_path_roundtrip() {
 
     action::set_enabled(&item, false).expect("disable");
     assert_eq!(
-        startup_approved::read_state(Hive::Hkcu, &subkey, "ActionTest"),
+        read_state(Hive::Hkcu, &subkey, "ActionTest"),
         ApprovedState::Disabled
     );
 
     action::set_enabled(&item, true).expect("enable");
     assert_eq!(
-        startup_approved::read_state(Hive::Hkcu, &subkey, "ActionTest"),
+        read_state(Hive::Hkcu, &subkey, "ActionTest"),
         ApprovedState::Enabled
     );
 }

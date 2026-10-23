@@ -8,9 +8,8 @@ use crate::error::{AppError, AppResult};
 use crate::model::{ActionRef, StartupItem};
 use crate::paths;
 use crate::scan::tasks;
+use crate::scan::uwp::APP_MODEL;
 use crate::startup_approved;
-
-const UWP_STATE_KEY: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData";
 
 pub fn set_enabled(item: &StartupItem, enabled: bool) -> AppResult<()> {
     if item.readonly {
@@ -47,7 +46,7 @@ pub fn set_enabled(item: &StartupItem, enabled: bool) -> AppResult<()> {
 }
 
 fn set_uwp_state(pfn: &str, task_id: &str, enabled: bool) -> AppResult<()> {
-    let path = format!(r"{UWP_STATE_KEY}\{pfn}\{task_id}");
+    let path = format!(r"{APP_MODEL}\{pfn}\{task_id}");
     let key = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_with_flags(&path, KEY_READ | KEY_WRITE)
         .map_err(|e| AppError::registry("无法打开 UWP 启动任务", e))?;

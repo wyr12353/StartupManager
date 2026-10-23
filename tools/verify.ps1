@@ -13,9 +13,9 @@ rustc --version
 node --version
 npm --version
 
-Write-Host "`n== StartupApproved selftest =="
-cargo run --manifest-path src-tauri/Cargo.toml -- --selftest
-if ($LASTEXITCODE -ne 0) { throw "selftest failed" }
+Write-Host "`n== Unit tests (includes StartupApproved parser cases) =="
+cargo test --manifest-path src-tauri/Cargo.toml
+if ($LASTEXITCODE -ne 0) { throw "tests failed" }
 
 Write-Host "`n== Read-only scan =="
 $json = cargo run --manifest-path src-tauri/Cargo.toml -- --scan-json | ConvertFrom-Json

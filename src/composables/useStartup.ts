@@ -294,11 +294,14 @@ export function useStartup() {
   function mergeResult(result: ScanResult) {
     if (result.error) {
       setSourceError(result.source, result.error);
-      // Keep the previous items for this source so a failed refresh does not
-      // make the list look empty.
+    } else {
+      clearSourceError(result.source);
+    }
+    if (result.error && result.items.length === 0) {
+      // A fully failed refresh must not make the list look empty; a partial
+      // failure still merges whatever was scanned.
       return;
     }
-    clearSourceError(result.source);
     const others = items.value.filter((item) => item.source !== result.source);
     const next = result.items.map(attachIcon);
     replaceItems([...others, ...next]);
@@ -468,9 +471,12 @@ export function useStartup() {
         description: item.name,
       });
     } catch (error) {
-      items.value = items.value.map((current) =>
-        current.id === item.id ? { ...current, enabled: previous } : current,
-      );
+      const current = items.value.find((entry) => entry.id === item.id);
+      if (current) {
+        // Roll back through updateItem so a row that gained an icon while the
+        // request was in flight keeps it.
+        updateItem({ ...current, enabled: previous });
+      }
       const apiError = error instanceof ApiError ? error : null;
       toast.error(apiError?.message ?? "操作失败", {
         description:

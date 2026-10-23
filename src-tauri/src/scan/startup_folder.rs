@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
-use crate::model::{ActionRef, Hive, ScanResult, Scope, SignatureStatus, SourceKind, StartupItem};
+use crate::model::{ActionRef, Hive, ScanResult, Scope, SourceKind, StartupItem};
 use crate::signature;
 use crate::startup_approved::{self, ApprovedState};
 use crate::util::make_id;
@@ -165,19 +165,7 @@ fn scan_dir_inner(
             None => path.to_string_lossy().to_string(),
         };
 
-        let signature_status = if metadata {
-            exe_path
-                .as_deref()
-                .map(signature::verify)
-                .unwrap_or(SignatureStatus::Unknown)
-        } else {
-            SignatureStatus::Unknown
-        };
-        let publisher = if metadata {
-            exe_path.as_deref().and_then(signature::publisher_for)
-        } else {
-            None
-        };
+        let (publisher, signature_status) = signature::describe(exe_path.as_deref(), metadata);
         let locator = path.to_string_lossy().to_string();
         items.push(StartupItem {
             id: make_id(SourceKind::StartupFolder, scope, None, &locator),
