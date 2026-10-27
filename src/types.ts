@@ -3,7 +3,8 @@ export type SourceKind =
   | "startupFolder"
   | "uwp"
   | "scheduledTask"
-  | "service";
+  | "service"
+  | "contextMenu";
 
 export type Scope = "currentUser" | "allUsers";
 export type RegView = "64" | "32";
@@ -22,6 +23,8 @@ export interface StartupItem {
   view: RegView | null;
   enabled: boolean;
   readonly: boolean;
+  /** True when a write changes machine-wide state and needs elevation. */
+  machineWide: boolean;
   origin: string;
   warnings: string[];
 }
@@ -46,6 +49,12 @@ export interface ScanProgress {
 export interface AppState {
   isElevated: boolean;
   version: string;
+  /** Account that owns the elevated token. */
+  currentUser: string | null;
+  /** Account that launched the process before UAC. */
+  originalUser: string | null;
+  /** UAC was answered with a different account, so HKCU belongs to that one. */
+  userMismatch: boolean;
 }
 
 export interface SnapshotSummary {
@@ -70,7 +79,13 @@ export interface SnapshotDiff {
   changed: ItemChange[];
 }
 
-export type ViewKind = "login" | "tasks" | "uwp" | "services" | "snapshots";
+export type ViewKind =
+  | "login"
+  | "tasks"
+  | "uwp"
+  | "services"
+  | "contextMenu"
+  | "snapshots";
 export type FilterMode =
   | "all"
   | "enabled"

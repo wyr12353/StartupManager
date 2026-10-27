@@ -1,10 +1,4 @@
-use std::sync::OnceLock;
-
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree, VARIANT_BOOL};
-use windows::Win32::Security::{
-    Authorization::ConvertSidToStringSidW, GetTokenInformation, LookupAccountSidW, SID_NAME_USE,
-    TOKEN_QUERY, TOKEN_USER, TokenUser,
-};
+use windows::Win32::Foundation::VARIANT_BOOL;
 use windows::Win32::System::Com::{
     CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoUninitialize,
 };
@@ -13,121 +7,17 @@ use windows::Win32::System::TaskScheduler::{
     ITaskFolder, ITaskService, TASK_ENUM_HIDDEN, TASK_TRIGGER_BOOT, TASK_TRIGGER_LOGON,
     TASK_TRIGGER_TYPE2,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows::Win32::System::Variant::VARIANT;
-use windows::core::{BSTR, GUID, Interface, PCWSTR, PWSTR};
+use windows::core::{BSTR, GUID, Interface};
 
 use crate::error::{AppError, AppResult};
+use crate::identity;
 use crate::model::{ActionRef, ScanResult, Scope, SourceKind, StartupItem};
 use crate::signature;
 use crate::util::{make_id, parse_executable};
 
 const CLSID_TASK_SERVICE: GUID = GUID::from_u128(0x0f87369f_a4e5_4cfc_bd3e_73e6154572dd);
 const MAX_TASK_FOLDER_DEPTH: usize = 32;
-
-struct CurrentUser {
-    sid: String,
-    account: String,
-}
-
-static CURRENT_USER: OnceLock<Option<CurrentUser>> = OnceLock::new();
-
-fn current_user() -> Option<&'static CurrentUser> {
-    CURRENT_USER.get_or_init(load_current_user).as_ref()
-}
-
-fn load_current_user() -> Option<CurrentUser> {
-    unsafe {
-        let mut token = HANDLE::default();
-        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
-        let result = read_current_user(token);
-        let _ = CloseHandle(token);
-        result
-    }
-}
-
-unsafe fn read_current_user(token: HANDLE) -> Option<CurrentUser> {
-    let mut length = 0u32;
-    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut length) };
-    if length == 0 {
-        return None;
-    }
-    let words = (length as usize).div_ceil(std::mem::size_of::<usize>());
-    let mut buffer = vec![0usize; words];
-    unsafe {
-        GetTokenInformation(
-            token,
-            TokenUser,
-            Some(buffer.as_mut_ptr().cast()),
-            length,
-            &mut length,
-        )
-    }
-    .ok()?;
-    let sid = unsafe { (*(buffer.as_ptr() as *const TOKEN_USER)).User.Sid };
-
-    let mut sid_ptr = PWSTR::null();
-    unsafe { ConvertSidToStringSidW(sid, &mut sid_ptr) }.ok()?;
-    let sid_string = unsafe { sid_ptr.to_string() };
-    let _ = unsafe { LocalFree(Some(HLOCAL(sid_ptr.0.cast()))) };
-    let sid_string = sid_string.ok()?;
-
-    let mut name_len = 0u32;
-    let mut domain_len = 0u32;
-    let mut use_type = SID_NAME_USE(0);
-    let _ = unsafe {
-        LookupAccountSidW(
-            PCWSTR::null(),
-            sid,
-            None,
-            &mut name_len,
-            None,
-            &mut domain_len,
-            &mut use_type,
-        )
-    };
-    let account = if name_len == 0 {
-        String::new()
-    } else {
-        let mut name_buf = vec![0u16; name_len as usize];
-        let mut domain_buf = vec![0u16; domain_len as usize];
-        let domain_arg = if domain_len == 0 {
-            None
-        } else {
-            Some(PWSTR(domain_buf.as_mut_ptr()))
-        };
-        let looked_up = unsafe {
-            LookupAccountSidW(
-                PCWSTR::null(),
-                sid,
-                Some(PWSTR(name_buf.as_mut_ptr())),
-                &mut name_len,
-                domain_arg,
-                &mut domain_len,
-                &mut use_type,
-            )
-        };
-        if looked_up.is_ok() {
-            let name = String::from_utf16_lossy(&name_buf[..name_len as usize])
-                .trim_end_matches('\0')
-                .to_string();
-            let domain = String::from_utf16_lossy(&domain_buf[..domain_len as usize])
-                .trim_end_matches('\0')
-                .to_string();
-            if domain.is_empty() {
-                name
-            } else {
-                format!("{domain}\\{name}")
-            }
-        } else {
-            String::new()
-        }
-    };
-    Some(CurrentUser {
-        sid: sid_string,
-        account,
-    })
-}
 
 fn normalize_principal(value: &str) -> String {
     value.trim().trim_start_matches(".\\").to_ascii_lowercase()
@@ -143,9 +33,9 @@ fn is_current_user(user_id: &str) -> bool {
     if uid.is_empty() || is_system_principal(&uid) {
         return false;
     }
-    if let Some(current) = current_user() {
+    if let Some(current) = identity::current() {
         let sid = current.sid.to_ascii_lowercase();
-        let account = current.account.to_ascii_lowercase();
+        let account = current.name.to_ascii_lowercase();
         if uid == sid || (!account.is_empty() && uid == account) {
             return true;
         }
@@ -392,6 +282,7 @@ fn task_to_item(task: &IRegisteredTask, metadata: bool) -> Result<Option<Startup
         view: None,
         enabled,
         readonly: system_task,
+        machine_wide: !system_task && scope == Scope::AllUsers,
         origin: path.clone(),
         warnings,
         action: if system_task {
@@ -480,7 +371,8 @@ fn split_task_path(path: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{current_user, is_current_user, is_system_principal};
+    use super::{is_current_user, is_system_principal};
+    use crate::identity;
 
     #[test]
     fn recognizes_system_principals() {
@@ -494,12 +386,12 @@ mod tests {
 
     #[test]
     fn recognizes_the_current_user() {
-        let Some(current) = current_user() else {
+        let Some(current) = identity::current() else {
             return;
         };
         assert!(is_current_user(&current.sid));
-        if !current.account.is_empty() {
-            assert!(is_current_user(&current.account));
+        if !current.name.is_empty() {
+            assert!(is_current_user(&current.name));
         }
         assert!(!is_current_user(""));
         assert!(!is_current_user("S-1-5-18"));

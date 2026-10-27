@@ -58,6 +58,7 @@ export const api = {
   scanFast: () => call<ScanResult[]>("scan_fast"),
   scanTasks: () => call<ScanResult[]>("scan_tasks"),
   scanServices: () => call<ScanResult[]>("scan_services"),
+  scanContextMenu: () => call<ScanResult[]>("scan_context_menu"),
   setItemEnabled: (id: string, source: SourceKind, enabled: boolean) =>
     call<void>("set_item_enabled", { id, source, enabled }),
   saveSnapshot: () => call<SnapshotSummary>("save_snapshot"),

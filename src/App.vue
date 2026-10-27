@@ -11,6 +11,7 @@ import ItemTable from "@/components/ItemTable.vue";
 import ItemDetails from "@/components/ItemDetails.vue";
 import ConfirmDialog from "@/components/ConfirmDialog.vue";
 import SnapshotPanel from "@/components/SnapshotPanel.vue";
+import SessionBanner from "@/components/SessionBanner.vue";
 import { useStartup } from "@/composables/useStartup";
 import { isMicrosoftItem, viewLabel } from "@/lib/format";
 import type { ConfirmRequest, StartupItem } from "@/types";
@@ -41,10 +42,9 @@ const {
   counts,
   enabledCount,
   disabledCount,
-  scanAll,
+  refreshCurrentView,
   toggle,
   saveSnapshot,
-  refreshSnapshots,
   loadDiff,
   deleteSnapshot,
   openLocation,
@@ -75,7 +75,10 @@ function requestToggle(item: StartupItem, enabled: boolean) {
   if (item.readonly) {
     return;
   }
-  if (item.scope === "allUsers" || isMicrosoftItem(item)) {
+  if (
+    item.machineWide ||
+    isMicrosoftItem(item)
+  ) {
     confirmRequest.value = { item, enabled };
     return;
   }
@@ -103,7 +106,7 @@ function onKeydown(event: KeyboardEvent) {
       toast.info("正在保存或对比快照，请稍候");
       return;
     }
-    void scanAll();
+    void refreshCurrentView();
     return;
   }
   // Let open dialogs/sheets handle their own keys (Escape, focus trap).
@@ -140,13 +143,14 @@ onBeforeUnmount(() => {
       <SideNav
         :view="view"
         :counts="counts"
-        :version="appState?.version ?? '0.1.1'"
+        :version="appState?.version ?? '0.2.0'"
         :is-elevated="appState ? appState.isElevated : null"
         @update:view="setView"
       />
 
-      <div class="flex min-w-0 flex-1 flex-col">
+      <div class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
         <Toolbar
+          class="absolute inset-x-0 top-0 z-30"
           :view="view"
           :title="viewLabel(view)"
           :count="view === 'snapshots' ? counts.snapshots : visibleItems.length"
@@ -163,32 +167,16 @@ onBeforeUnmount(() => {
           :snapshot-saving="snapshotSaving"
           @update:query="query = $event"
           @update:filter="filter = $event"
-          @refresh="view === 'snapshots' ? refreshSnapshots() : scanAll()"
+          @refresh="refreshCurrentView"
           @save-snapshot="saveSnapshot"
         />
-
-        <ErrorBanner :errors="errors" :fatal-error="fatalError" />
-
-        <Transition name="collapse">
-          <div
-            v-if="view === 'services'"
-            class="grid shrink-0 grid-rows-[1fr]"
-          >
-            <div class="min-h-0 overflow-hidden">
-              <div
-                class="border-b border-border bg-muted/30 px-5 py-2.5 text-[14px] text-muted-foreground"
-              >
-                服务列表为只读，工具暂不提供启用/禁用，避免误改系统关键服务。
-              </div>
-            </div>
-          </div>
-        </Transition>
 
         <div class="min-h-0 flex-1">
           <Transition name="view" mode="out-in">
             <SnapshotPanel
               v-if="view === 'snapshots'"
               key="snapshots"
+              class="pt-16 pb-9"
               :snapshots="snapshots"
               :snapshots-loading="snapshotsLoading"
               :error="snapshotsError"
@@ -201,10 +189,15 @@ onBeforeUnmount(() => {
               @save="saveSnapshot"
               @load-diff="loadDiff"
               @delete="deleteSnapshot"
-            />
+            >
+              <template #banner>
+                <SessionBanner :state="appState" />
+                <ErrorBanner :errors="errors" :fatal-error="fatalError" />
+              </template>
+            </SnapshotPanel>
             <ItemTable
               v-else
-              key="items"
+              :key="view"
               :items="visibleItems"
               :busy-ids="busyIds"
               :selected-id="selectedId"
@@ -212,13 +205,49 @@ onBeforeUnmount(() => {
               :has-filters="Boolean(query) || filter !== 'all'"
               @select="selectItem"
               @toggle="requestToggle"
-              @refresh="scanAll"
+              @refresh="refreshCurrentView"
               @clear-filters="clearFilters"
-            />
+            >
+              <template #banner>
+                <SessionBanner :state="appState" />
+                <div class="sticky top-16 z-20">
+                  <ErrorBanner :errors="errors" :fatal-error="fatalError" />
+                </div>
+                <Transition name="collapse">
+                  <div
+                    v-if="view === 'services'"
+                    class="grid grid-rows-[1fr]"
+                  >
+                    <div class="min-h-0 overflow-hidden">
+                      <div
+                        class="border-b border-border bg-muted/30 px-5 py-2.5 text-[14px] text-muted-foreground"
+                      >
+                        服务列表为只读，工具暂不提供启用/禁用，避免误改系统关键服务。
+                      </div>
+                    </div>
+                  </div>
+                </Transition>
+                <Transition name="collapse">
+                  <div
+                    v-if="view === 'contextMenu'"
+                    class="grid grid-rows-[1fr]"
+                  >
+                    <div class="min-h-0 overflow-hidden">
+                      <div
+                        class="border-b border-border bg-muted/30 px-5 py-2.5 text-[14px] leading-relaxed text-muted-foreground"
+                      >
+                        已自动排除 Microsoft 自带项。COM 扩展与机器级命令影响所有用户，修改时需要管理员授权；当前用户注册的命令只影响当前用户。修改后如未生效，请重启资源管理器。Windows 11 新版主菜单暂未纳入本页。
+                      </div>
+                    </div>
+                  </div>
+                </Transition>
+              </template>
+            </ItemTable>
           </Transition>
         </div>
 
         <StatusBar
+          class="absolute inset-x-0 bottom-0 z-30"
           :mode="view === 'snapshots' ? 'snapshots' : 'items'"
           :total="view === 'snapshots' ? counts.snapshots : viewItems.length"
           :enabled="enabledCount"

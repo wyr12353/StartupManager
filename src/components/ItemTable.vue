@@ -3,6 +3,7 @@ import {
   BoxesIcon,
   CalendarClockIcon,
   FolderIcon,
+  MousePointerClickIcon,
   RocketIcon,
   ServerCogIcon,
   TriangleAlertIcon,
@@ -25,6 +26,7 @@ import {
 } from "@/components/ui/table";
 import EmptyState from "@/components/EmptyState.vue";
 import {
+  contextMenuLocation,
   scopeLabel,
   shortCommand,
   sourceShortLabel,
@@ -58,6 +60,8 @@ function iconFor(source: SourceKind) {
       return CalendarClockIcon;
     case "service":
       return ServerCogIcon;
+    case "contextMenu":
+      return MousePointerClickIcon;
   }
 }
 
@@ -65,6 +69,8 @@ function iconFor(source: SourceKind) {
 
 <template>
   <div class="h-full overflow-auto">
+    <div class="min-h-full pt-16 pb-9">
+    <slot name="banner" />
     <Transition name="fade" mode="out-in">
       <div
         v-if="loading && items.length === 0"
@@ -92,7 +98,7 @@ function iconFor(source: SourceKind) {
       />
 
       <Table v-else key="table" class="w-full table-fixed">
-      <TableHeader class="bg-background [&_th]:sticky [&_th]:top-0 [&_th]:z-10 [&_th]:bg-background">
+      <TableHeader class="[&_th]:sticky [&_th]:top-16 [&_th]:z-10 [&_th]:bg-background/65 [&_th]:backdrop-blur-2xl [&_th]:backdrop-saturate-150">
         <TableRow class="hover:bg-transparent">
           <TableHead scope="col" class="h-12 w-[30%] pl-5 pr-4 text-[14px]">名称</TableHead>
           <TableHead scope="col" class="h-12 w-[17%] px-4 text-[14px]">发布者</TableHead>
@@ -135,8 +141,13 @@ function iconFor(source: SourceKind) {
                   {{ item.name }}
                 </button>
                 <div class="truncate text-[13px] text-muted-foreground">
-                  {{ scopeLabel(item.scope) }}
-                  <span v-if="item.view"> · {{ item.view }} 位</span>
+                  <template v-if="item.source === 'contextMenu'">
+                    {{ contextMenuLocation(item.origin) }}
+                  </template>
+                  <template v-else>
+                    {{ scopeLabel(item.scope) }}
+                    <span v-if="item.view"> · {{ item.view }} 位</span>
+                  </template>
                 </div>
               </div>
               <div class="flex w-6 shrink-0 items-center justify-center">
@@ -244,5 +255,6 @@ function iconFor(source: SourceKind) {
       </TableBody>
     </Table>
     </Transition>
+    </div>
   </div>
 </template>

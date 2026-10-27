@@ -179,6 +179,7 @@ fn scan_dir_inner(
             view: None,
             enabled: state.is_enabled(),
             readonly: false,
+            machine_wide: approved_hive == Hive::Hklm,
             origin: locator,
             warnings,
             action: Some(ActionRef::StartupApproved {

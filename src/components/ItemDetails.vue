@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/sheet";
 import {
   displayPath,
+  isContextMenuHandler,
   scopeLabel,
   signatureLabel,
   sourceLabel,
@@ -44,6 +45,17 @@ const canOpenLocation = computed(() => {
     return false;
   }
   return Boolean(item.exePath) || item.source === "startupFolder";
+});
+
+const itemType = computed(() => {
+  const item = props.item;
+  if (!item || item.source !== "contextMenu") {
+    return null;
+  }
+  if (isContextMenuHandler(item)) {
+    return "COM 扩展";
+  }
+  return item.command?.startsWith("COM ") ? "COM 命令" : "命令";
 });
 
 function copyCommand() {
@@ -147,11 +159,20 @@ function copyCommand() {
               <dt class="text-muted-foreground">签名</dt>
               <dd>{{ signatureLabel(item.signature) }}</dd>
 
+              <dt v-if="itemType" class="text-muted-foreground">类型</dt>
+              <dd v-if="itemType">{{ itemType }}</dd>
+
               <dt class="text-muted-foreground">作用域</dt>
               <dd>
                 {{ scopeLabel(item.scope) }}
                 <span v-if="item.view" class="text-muted-foreground">
                   · {{ item.view }} 位
+                </span>
+                <span
+                  v-if="item.scope === 'allUsers' && !item.machineWide && !item.readonly"
+                  class="block text-[12.5px] text-muted-foreground"
+                >
+                  修改写入当前用户覆盖
                 </span>
               </dd>
 

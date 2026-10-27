@@ -95,6 +95,15 @@ pub fn data_url_for(path: &Path) -> Option<String> {
     if is_remote_path(path) {
         return None;
     }
+    // Extracting a DLL icon may load the library into the process. Shell
+    // extensions are third-party code, so show the generic icon instead.
+    if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("dll"))
+    {
+        return None;
+    }
     let key = path.to_string_lossy().to_ascii_lowercase();
     let cache = icon_cache();
     if let Some(cached) = cache
@@ -408,6 +417,7 @@ mod tests {
             view: None,
             enabled: true,
             readonly: false,
+            machine_wide: false,
             origin: "test".to_string(),
             warnings: Vec::new(),
             action: None,

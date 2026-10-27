@@ -108,6 +108,96 @@ pub fn decode_reg_string(value: &RegValue) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
+/// Resolves a shell display string such as `@%SystemRoot%\system32\shell32.dll,-8506`.
+/// `SHLoadIndirectString` can load the referenced module, so only modules under
+/// the Windows directory or Program Files are accepted. Plain strings are
+/// returned unchanged; an empty, `ms-resource:` or untrusted indirect string
+/// yields `None`.
+pub fn shell_display_text(raw: &str) -> Option<String> {
+    let value = expand_env(raw.trim());
+    if value.is_empty() || value.to_ascii_lowercase().contains("ms-resource:") {
+        return None;
+    }
+    if !value.starts_with('@') {
+        return Some(value);
+    }
+    let path = indirect_resource_path(&value)?;
+    if !is_trusted_resource(&path) {
+        return None;
+    }
+    resolve_indirect_string(&value)
+}
+
+/// Extracts the module path from an indirect string. `@{...}` forms resolve
+/// through a package identity and are not handled here.
+fn indirect_resource_path(value: &str) -> Option<PathBuf> {
+    let rest = value.strip_prefix('@')?;
+    if rest.starts_with('{') {
+        return None;
+    }
+    let comma = rest.rfind(',')?;
+    let raw = rest[..comma].trim().trim_matches('"');
+    if raw.is_empty() {
+        return None;
+    }
+    let expanded = PathBuf::from(expand_env(raw));
+    if expanded.is_absolute() {
+        Some(expanded)
+    } else {
+        let candidate = windows_dir().join("System32").join(expanded);
+        candidate.is_file().then_some(candidate)
+    }
+}
+
+fn is_trusted_resource(path: &Path) -> bool {
+    // `C:\Windows\..\Users\evil\x.dll` still carries the trusted prefix.
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    if !path.is_file() {
+        return false;
+    }
+    let value = path
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
+    let mut roots = vec![windows_dir().to_string_lossy().to_string()];
+    for name in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(root) = std::env::var_os(name) {
+            roots.push(PathBuf::from(root).to_string_lossy().to_string());
+        }
+    }
+    roots.iter().any(|root| {
+        let root = root
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase();
+        // Compare whole path components so `C:\WindowsApps` is not treated as
+        // a child of `C:\Windows`.
+        !root.is_empty() && (value == root || value.starts_with(&format!("{root}\\")))
+    })
+}
+
+fn resolve_indirect_string(value: &str) -> Option<String> {
+    use windows::Win32::UI::Shell::SHLoadIndirectString;
+    use windows::core::PCWSTR;
+
+    let wide: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut output = vec![0u16; 8192];
+    let result = unsafe { SHLoadIndirectString(PCWSTR(wide.as_ptr()), &mut output, None) };
+    if result.is_err() {
+        return None;
+    }
+    let text = String::from_utf16_lossy(&output)
+        .trim_end_matches('\0')
+        .trim()
+        .to_string();
+    (!text.is_empty()).then_some(text)
+}
+
 pub fn parse_executable(command: &str) -> Option<PathBuf> {
     let expanded = expand_env(command);
     let trimmed = expanded.trim();
@@ -159,6 +249,42 @@ mod tests {
     use std::path::Path;
     use winreg::RegValue;
     use winreg::enums::{REG_BINARY, REG_SZ};
+
+    #[test]
+    fn resolves_only_safe_display_strings() {
+        assert_eq!(
+            super::shell_display_text("  Notepad  ").as_deref(),
+            Some("Notepad")
+        );
+        assert_eq!(super::shell_display_text("   "), None);
+        assert_eq!(super::shell_display_text("ms-resource://foo"), None);
+        assert_eq!(
+            super::shell_display_text(r"@C:\Users\Public\missing.dll,-1"),
+            None
+        );
+    }
+
+    #[test]
+    fn accepts_only_resources_inside_trusted_roots() {
+        let system32 = super::windows_dir().join("System32");
+        let shell32 = system32.join("shell32.dll");
+        if shell32.is_file() {
+            assert!(super::is_trusted_resource(&shell32));
+            assert!(
+                !super::is_trusted_resource(
+                    &super::windows_dir()
+                        .join("..")
+                        .join("Windows")
+                        .join("System32")
+                        .join("shell32.dll")
+                ),
+                "parent-directory traversal must be rejected"
+            );
+        }
+        assert!(!super::is_trusted_resource(Path::new(
+            r"C:\WindowsApps\missing.dll"
+        )));
+    }
 
     #[test]
     fn parses_quoted_and_unquoted_paths() {

@@ -14,7 +14,7 @@ defineProps<{
 
 <template>
   <footer
-    class="flex h-9 shrink-0 items-center justify-between border-t border-border px-5 text-[13.5px] text-muted-foreground"
+    class="flex h-9 shrink-0 items-center justify-between border-t border-border/60 bg-background/65 px-5 text-[13.5px] text-muted-foreground backdrop-blur-2xl backdrop-saturate-150"
   >
     <div class="flex items-center gap-3">
       <span>{{ mode === "snapshots" ? `共 ${total} 个快照` : `共 ${total} 项` }}</span>

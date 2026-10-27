@@ -152,6 +152,7 @@ fn scan_key(
             view: (hive == Hive::Hklm).then_some(view),
             enabled: state.is_enabled(),
             readonly: once,
+            machine_wide: !once && approved_hive == Hive::Hklm,
             origin: format!("{}\\{}", hive.label(), subkey),
             warnings,
             action: if once {

@@ -19,12 +19,15 @@ const nameCollator = new Intl.Collator("zh-CN");
 const ICON_BATCH_SIZE = 50;
 const ICON_CACHE_LIMIT = 512;
 const ICON_RETRY_MS = 60_000;
+/// Re-scan the right-click menu when the cached list is older than this.
+const CONTEXT_MENU_STALE_MS = 15_000;
 
 const sourceByView: Record<Exclude<ViewKind, "snapshots">, SourceKind[]> = {
   login: ["registryRun", "startupFolder"],
   tasks: ["scheduledTask"],
   uwp: ["uwp"],
   services: ["service"],
+  contextMenu: ["contextMenu"],
 };
 
 function errorMessage(error: unknown): string {
@@ -39,6 +42,9 @@ export function useStartup() {
   const loading = ref(true);
   const scanning = ref(false);
   const servicesLoading = ref(false);
+  const contextMenuLoading = ref(false);
+  const contextMenuLoaded = ref(false);
+  const contextMenuLoadedAt = ref(0);
   const errors = ref<Partial<Record<SourceKind, string>>>({});
   const fatalError = ref<string | null>(null);
   const progress = ref<ScanProgress | null>(null);
@@ -72,6 +78,8 @@ export function useStartup() {
   let scanInFlight: Promise<void> | null = null;
   let diffRun = 0;
   let snapshotRun = 0;
+  let contextMenuInFlight: Promise<void> | null = null;
+  let contextMenuRun = 0;
 
   function iconKey(item: StartupItem): string | null {
     return item.exePath ? item.exePath.toLowerCase() : null;
@@ -213,6 +221,7 @@ export function useStartup() {
     let tasks = 0;
     let uwp = 0;
     let services = 0;
+    let contextMenu = 0;
     for (const item of items.value) {
       switch (item.source) {
         case "registryRun":
@@ -228,6 +237,9 @@ export function useStartup() {
         case "service":
           services += 1;
           break;
+        case "contextMenu":
+          contextMenu += 1;
+          break;
       }
     }
     return {
@@ -235,6 +247,7 @@ export function useStartup() {
       tasks,
       uwp,
       services,
+      contextMenu,
       snapshots: snapshots.value.length,
     };
   });
@@ -255,7 +268,9 @@ export function useStartup() {
   );
   const currentLoading = computed(
     () =>
-      loading.value || (view.value === "services" && servicesLoading.value),
+      loading.value ||
+      (view.value === "services" && servicesLoading.value) ||
+      (view.value === "contextMenu" && contextMenuLoading.value),
   );
 
   function replaceItems(next: StartupItem[]) {
@@ -455,6 +470,46 @@ export function useStartup() {
     return task;
   }
 
+  function scanContextMenu(): Promise<void> {
+    if (contextMenuInFlight) {
+      return contextMenuInFlight;
+    }
+    const run = ++contextMenuRun;
+    contextMenuLoading.value = true;
+    const task = (async () => {
+      try {
+        const results = await api.scanContextMenu();
+        if (run !== contextMenuRun) {
+          return;
+        }
+        results.forEach(mergeResult);
+        contextMenuLoaded.value = true;
+        contextMenuLoadedAt.value = Date.now();
+      } catch (error) {
+        if (run === contextMenuRun) {
+          setSourceError("contextMenu", errorMessage(error));
+        }
+      } finally {
+        if (run === contextMenuRun) {
+          contextMenuLoading.value = false;
+        }
+        contextMenuInFlight = null;
+      }
+    })();
+    contextMenuInFlight = task;
+    return task;
+  }
+
+  function refreshCurrentView(): Promise<void> {
+    if (view.value === "snapshots") {
+      return refreshSnapshots();
+    }
+    if (view.value === "contextMenu") {
+      return scanContextMenu();
+    }
+    return scanAll();
+  }
+
   async function toggle(item: StartupItem, enabled: boolean) {
     if (item.readonly || busyIds.value.has(item.id)) {
       return;
@@ -629,6 +684,13 @@ export function useStartup() {
     }
     view.value = next;
     selectedId.value = null;
+    if (next === "contextMenu" && !contextMenuLoading.value) {
+      const stale =
+        Date.now() - contextMenuLoadedAt.value > CONTEXT_MENU_STALE_MS;
+      if (!contextMenuLoaded.value || stale) {
+        void scanContextMenu();
+      }
+    }
     scheduleIcons();
   }
 
@@ -638,8 +700,10 @@ export function useStartup() {
 
   onMounted(() => {
     // Start scanning immediately; a slow or failed progress listener must not
-    // delay the first paint of real data.
+    // delay the first paint of real data. The context menu scan runs in the
+    // background so its sidebar count is ready before the user opens the page.
     void scanAll();
+    void scanContextMenu();
     void onScanProgress((event) => {
       progress.value = event;
     })
@@ -667,6 +731,7 @@ export function useStartup() {
 
   return {
     scanning,
+    contextMenuLoading,
     currentLoading,
     errors,
     fatalError,
@@ -692,6 +757,8 @@ export function useStartup() {
     enabledCount,
     disabledCount,
     scanAll,
+    scanContextMenu,
+    refreshCurrentView,
     toggle,
     saveSnapshot,
     refreshSnapshots,

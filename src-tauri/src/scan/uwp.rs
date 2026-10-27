@@ -91,6 +91,7 @@ pub fn scan() -> ScanResult {
                 view: None,
                 enabled,
                 readonly,
+                machine_wide: false,
                 origin,
                 warnings,
                 action: if readonly {

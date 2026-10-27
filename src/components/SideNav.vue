@@ -3,6 +3,7 @@ import {
   BoxesIcon,
   CalendarClockIcon,
   CameraIcon,
+  MousePointerClickIcon,
   PowerIcon,
   RocketIcon,
   ServerCogIcon,
@@ -28,6 +29,11 @@ const navItems = [
   { key: "tasks" as const, label: "计划任务", icon: CalendarClockIcon },
   { key: "uwp" as const, label: "UWP 应用", icon: BoxesIcon },
   { key: "services" as const, label: "服务", icon: ServerCogIcon },
+  {
+    key: "contextMenu" as const,
+    label: "右键菜单",
+    icon: MousePointerClickIcon,
+  },
   { key: "snapshots" as const, label: "快照对比", icon: CameraIcon },
 ];
 </script>

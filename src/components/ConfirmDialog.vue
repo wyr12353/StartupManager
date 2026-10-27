@@ -12,7 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { isMicrosoftItem } from "@/lib/format";
+import { isContextMenuHandler, isMicrosoftItem } from "@/lib/format";
 import type { ConfirmRequest } from "@/types";
 
 const props = defineProps<{
@@ -40,6 +40,23 @@ const description = computed(() => {
   if (request.item.source === "service") {
     return "服务项为只读，工具不会修改。";
   }
+  if (request.item.source === "contextMenu") {
+    const parts: string[] = [
+      request.enabled
+        ? "启用后会重新出现在右键菜单中。"
+        : "禁用后会从右键菜单隐藏，随时可以重新启用。",
+    ];
+    if (isContextMenuHandler(request.item)) {
+      parts.push("这是 COM 扩展，禁用会影响所有用户和所有注册位置。");
+    }
+    if (request.item.machineWide) {
+      parts.push("这是机器级注册项，修改会影响所有用户，需要管理员授权。");
+    }
+    if (isMicrosoftItem(request.item)) {
+      parts.push("这是 Microsoft 系统项，修改可能影响系统功能。");
+    }
+    return parts.join(" ");
+  }
   const parts: string[] = [];
   if (request.item.source === "scheduledTask") {
     parts.push(
@@ -47,14 +64,17 @@ const description = computed(() => {
         ? "启用后会在下次触发时运行。"
         : "禁用后会在下次触发时跳过，随时可以重新启用。",
     );
-    parts.push("计划任务由系统统一管理，修改需要管理员授权，通常立即生效。");
+    parts.push("计划任务由系统统一管理，通常立即生效。");
+    if (request.item.machineWide) {
+      parts.push("这是机器级任务，修改需要管理员授权。");
+    }
   } else {
     parts.push(
       request.enabled
         ? "启用后会在下次登录时运行。"
         : "禁用后会在下次登录时跳过，随时可以重新启用。",
     );
-    if (request.item.scope === "allUsers") {
+    if (request.item.machineWide) {
       parts.push("这是机器级启动项，修改会影响所有用户，需要管理员授权。");
     }
   }

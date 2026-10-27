@@ -1,3 +1,4 @@
+pub mod context_menu;
 pub mod registry_run;
 pub mod services;
 pub mod startup_folder;
@@ -56,10 +57,21 @@ pub fn scan_services(app: Option<&AppHandle>) -> Vec<ScanResult> {
     vec![run_source(app, SourceKind::Service, 1, 1, services::scan)]
 }
 
+pub fn scan_context_menu(app: Option<&AppHandle>) -> Vec<ScanResult> {
+    vec![run_source(
+        app,
+        SourceKind::ContextMenu,
+        1,
+        1,
+        context_menu::scan,
+    )]
+}
+
 pub fn scan_all(app: Option<&AppHandle>) -> Vec<ScanResult> {
     let mut results = scan_fast(app);
     results.extend(scan_tasks(app));
     results.extend(scan_services(app));
+    results.extend(scan_context_menu(app));
     results
 }
 
@@ -113,6 +125,7 @@ fn scan_source(source: SourceKind, resolve_links: bool) -> ScanResult {
         SourceKind::Uwp => uwp::scan(),
         SourceKind::ScheduledTask => tasks::scan_with(false),
         SourceKind::Service => services::scan_with(false),
+        SourceKind::ContextMenu => context_menu::scan_with(false),
     }
 }
 
@@ -136,6 +149,9 @@ fn find_item_with(
     }
     if skip != Some(SourceKind::Service) {
         results.push(services::scan_with(false));
+    }
+    if skip != Some(SourceKind::ContextMenu) {
+        results.push(context_menu::scan_with(false));
     }
     for result in results {
         if let Some(item) = result.items.into_iter().find(|item| item.id == id) {

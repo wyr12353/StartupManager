@@ -3,6 +3,7 @@ pub mod commands;
 pub mod elevate;
 pub mod error;
 pub mod icons;
+pub mod identity;
 pub mod logging;
 pub mod model;
 pub mod paths;
@@ -14,12 +15,28 @@ pub mod util;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    logging::init();
-
     // Development convenience: allow a second GUI instance while iterating on
-    // the layout. The flag is ignored in release builds.
+    // the layout, and skip the startup UAC prompt. The flag is ignored in
+    // release builds.
     let allow_multiple =
         cfg!(debug_assertions) && std::env::args().any(|arg| arg == "--allow-multiple");
+
+    if !allow_multiple {
+        if elevate::is_elevated() {
+            // The SID was forwarded by the unelevated process before UAC. When
+            // it differs from the elevated token, HKCU belongs to another
+            // account and the UI must say so.
+            identity::remember_original_sid(elevated_for_arg());
+        } else {
+            let original_sid = identity::current_sid();
+            if let Err(error) = elevate::relaunch_as_admin(original_sid.as_deref()) {
+                elevate::show_startup_elevation_error(&error);
+            }
+            return;
+        }
+    }
+
+    logging::init();
 
     let mut builder = tauri::Builder::default();
     if !allow_multiple {
@@ -38,6 +55,7 @@ pub fn run() {
             commands::scan_fast,
             commands::scan_tasks,
             commands::scan_services,
+            commands::scan_context_menu,
             commands::set_item_enabled,
             commands::save_snapshot,
             commands::list_snapshots,
@@ -69,4 +87,14 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn elevated_for_arg() -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--elevated-for" {
+            return args.next();
+        }
+    }
+    None
 }

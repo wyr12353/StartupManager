@@ -44,6 +44,15 @@ pub async fn scan_services(app: AppHandle) -> Result<Vec<ScanResult>, AppError> 
 }
 
 #[tauri::command]
+pub async fn scan_context_menu(app: AppHandle) -> Result<Vec<ScanResult>, AppError> {
+    tauri::async_runtime::spawn_blocking(move || scan::scan_context_menu(Some(&app)))
+        .await
+        .map_err(|err| {
+            AppError::new("SCAN_FAILED", "扫描右键菜单失败").with_detail(err.to_string())
+        })
+}
+
+#[tauri::command]
 pub async fn set_item_enabled(
     id: String,
     source: SourceKind,
@@ -52,13 +61,14 @@ pub async fn set_item_enabled(
     tauri::async_runtime::spawn_blocking(move || {
         let item = scan::find_item_in_source(&id, source, false)?;
         if item.readonly {
-            return Err(AppError::unsupported("该启动项为只读，工具不会修改"));
+            return Err(AppError::unsupported("该项目为只读，工具不会修改"));
         }
         if item.requires_elevation() && !elevate::is_elevated() {
             elevate::request_set_enabled(&item, enabled)?;
         } else {
             action::set_enabled(&item, enabled)?;
         }
+        action::clear_stale_user_block(&item);
         action::record_action(&item, enabled);
         Ok(())
     })
@@ -225,9 +235,13 @@ pub async fn load_icons(paths: Vec<String>) -> Result<Vec<IconEntry>, AppError> 
 
 #[tauri::command]
 pub fn get_app_state() -> AppState {
+    let status = crate::identity::elevation_status();
     AppState {
         is_elevated: elevate::is_elevated(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        current_user: status.current_user,
+        original_user: status.original_user,
+        user_mismatch: status.mismatch,
     }
 }
 

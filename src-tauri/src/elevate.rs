@@ -13,7 +13,9 @@ use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Pipes::PeekNamedPipe;
 use windows::Win32::System::Threading::WaitForSingleObject;
 use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
-use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+use windows::Win32::UI::WindowsAndMessaging::{
+    MB_ICONERROR, MB_OK, MessageBoxW, SW_HIDE, SW_SHOWNORMAL,
+};
 use windows::core::{PCWSTR, PWSTR};
 
 use crate::action;
@@ -223,6 +225,108 @@ fn token_is_elevated(token: HANDLE) -> bool {
         .is_ok()
             && elevation.TokenIsElevated != 0
     }
+}
+
+/// Relaunches the current executable with the `runas` verb so the GUI starts
+/// with an administrator token. The caller should exit when this succeeds.
+/// `original_sid` identifies the account that was logged in before UAC, so the
+/// elevated instance can detect an over-the-shoulder elevation.
+pub fn relaunch_as_admin(original_sid: Option<&str>) -> AppResult<()> {
+    let exe = std::env::current_exe()?;
+    let mut arguments: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().to_string())
+        .collect();
+    if let Some(sid) = original_sid {
+        arguments.push("--elevated-for".to_string());
+        arguments.push(sid.to_string());
+    }
+    let params = arguments
+        .iter()
+        .map(|arg| quote_arg(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let verb: Vec<u16> = "runas\0".encode_utf16().collect();
+    let file: Vec<u16> = exe
+        .as_os_str()
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let parameters: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let mut execute_info = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: PCWSTR(verb.as_ptr()),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(parameters.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        ..Default::default()
+    };
+    let launch = unsafe { ShellExecuteExW(&mut execute_info) };
+    if let Err(err) = launch {
+        return Err(
+            AppError::new("ELEVATION_CANCELLED", "需要管理员权限才能启动")
+                .with_detail(err.to_string()),
+        );
+    }
+    if !execute_info.hProcess.is_invalid() {
+        unsafe {
+            let _ = CloseHandle(execute_info.hProcess);
+        }
+    }
+    Ok(())
+}
+
+pub fn show_startup_elevation_error(error: &AppError) {
+    let message = format!("启动项管理器需要管理员权限才能运行。\n\n{}", error.message);
+    let message: Vec<u16> = message.encode_utf16().chain(std::iter::once(0)).collect();
+    let caption: Vec<u16> = "启动项管理器"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(message.as_ptr()),
+            PCWSTR(caption.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
+fn quote_arg(arg: &str) -> String {
+    if !arg.is_empty()
+        && !arg
+            .chars()
+            .any(|character| character.is_whitespace() || character == '"')
+    {
+        return arg.to_string();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0usize;
+    for character in arg.chars() {
+        match character {
+            '\\' => {
+                backslashes += 1;
+                quoted.push('\\');
+            }
+            '"' => {
+                quoted.push_str(&"\\".repeat(backslashes + 1));
+                quoted.push('"');
+                backslashes = 0;
+            }
+            _ => {
+                backslashes = 0;
+                quoted.push(character);
+            }
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes));
+    quoted.push('"');
+    quoted
 }
 
 fn process_image_path(pid: u32) -> Option<PathBuf> {
@@ -490,7 +594,7 @@ fn perform_helper_action(request: &HelperRequest) -> AppResult<()> {
     tracing::info!(id = %request.id, enabled = request.enabled, "elevated helper acting");
     let item = scan::find_item_in_source(&request.id, request.source, false)?;
     if item.readonly {
-        return Err(AppError::unsupported("该启动项为只读"));
+        return Err(AppError::unsupported("该项目为只读"));
     }
     if item.scope != Scope::AllUsers {
         return Err(AppError::new("IPC_REJECTED", "提权进程只处理机器级启动项"));

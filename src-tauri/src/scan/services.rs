@@ -59,7 +59,7 @@ pub(crate) fn scan_with(metadata: bool) -> ScanResult {
         }
 
         let display_name = read_string(&key, "DisplayName")
-            .map(resolve_indirect_string)
+            .map(|value| crate::util::shell_display_text(&value).unwrap_or(value))
             .unwrap_or_else(|| name.clone());
         let image_path = read_string(&key, "ImagePath")
             .map(|value| normalize_image_path(&value))
@@ -102,6 +102,7 @@ pub(crate) fn scan_with(metadata: bool) -> ScanResult {
             view: None,
             enabled: true,
             readonly: true,
+            machine_wide: false,
             origin: name,
             warnings,
             action: None,
@@ -133,28 +134,6 @@ fn normalize_image_path(raw: &str) -> String {
         value = rest.to_string();
     }
     expand_env(&value)
-}
-
-fn resolve_indirect_string(raw: String) -> String {
-    if !raw.starts_with('@') {
-        return raw;
-    }
-    use windows::Win32::UI::Shell::SHLoadIndirectString;
-    use windows::core::PCWSTR;
-
-    let wide: Vec<u16> = raw.encode_utf16().chain(std::iter::once(0)).collect();
-    let mut output = vec![0u16; 8192];
-    let ok = unsafe { SHLoadIndirectString(PCWSTR(wide.as_ptr()), &mut output, None) };
-    if ok.is_ok() {
-        let text = String::from_utf16_lossy(&output)
-            .trim_end_matches('\0')
-            .trim()
-            .to_string();
-        if !text.is_empty() {
-            return text;
-        }
-    }
-    raw
 }
 
 fn read_string(key: &winreg::RegKey, name: &str) -> Option<String> {

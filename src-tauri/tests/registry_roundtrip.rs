@@ -77,6 +77,7 @@ fn action_path_roundtrip() {
         view: Some(RegView::X64),
         enabled: true,
         readonly: false,
+        machine_wide: false,
         origin: "test".to_string(),
         warnings: Vec::new(),
         action: Some(ActionRef::StartupApproved {

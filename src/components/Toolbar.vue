@@ -55,7 +55,7 @@ const filters: FilterMode[] = [
 
 <template>
   <header
-    class="flex h-16 shrink-0 items-center gap-4 border-b border-border bg-background px-5"
+    class="flex h-16 shrink-0 items-center gap-4 border-b border-border/60 bg-background/65 px-5 backdrop-blur-2xl backdrop-saturate-150"
   >
     <div
       :key="view"
@@ -121,7 +121,7 @@ const filters: FilterMode[] = [
       </Button>
       <ModeToggle />
       <Button
-        v-if="view !== 'snapshots'"
+        v-if="view !== 'snapshots' && view !== 'contextMenu'"
         variant="outline"
         size="sm"
         class="h-10 gap-2 px-3 text-[14px]"

@@ -18,6 +18,8 @@ export function sourceLabel(source: SourceKind): string {
       return "计划任务";
     case "service":
       return "服务";
+    case "contextMenu":
+      return "右键菜单";
   }
 }
 
@@ -33,6 +35,8 @@ export function sourceShortLabel(source: SourceKind): string {
       return "任务";
     case "service":
       return "服务";
+    case "contextMenu":
+      return "右键菜单";
   }
 }
 
@@ -76,15 +80,64 @@ export function viewLabel(view: ViewKind): string {
       return "UWP 应用";
     case "services":
       return "服务（只读）";
+    case "contextMenu":
+      return "右键菜单";
     case "snapshots":
       return "快照对比";
   }
+}
+
+export function contextMenuLocation(origin: string): string {
+  const lower = origin.toLowerCase();
+  const isCom = lower.includes("\\shellex\\contextmenuhandlers");
+  const multiple = origin.includes("；");
+  if (multiple) {
+    return isCom ? "多个位置 · COM 扩展" : "多个位置";
+  }
+  if (lower.includes("\\directory\\background\\")) {
+    return isCom ? "文件夹空白处 · COM 扩展" : "文件夹空白处";
+  }
+  if (lower.includes("\\desktopbackground\\")) {
+    return isCom ? "桌面背景 · COM 扩展" : "桌面背景";
+  }
+  if (lower.includes("\\systemfileassociations\\")) {
+    const match = origin.match(/SystemFileAssociations\\([^\\]+)/i);
+    const type = match?.[1] ?? "文件类型";
+    return isCom ? `${type} · COM 扩展` : type;
+  }
+  if (lower.includes("\\allfilesystemobjects\\")) {
+    return isCom ? "所有文件/文件夹 · COM 扩展" : "所有文件/文件夹";
+  }
+  if (lower.includes("\\directory\\")) {
+    return isCom ? "文件夹 · COM 扩展" : "文件夹";
+  }
+  if (lower.includes("\\folder\\")) {
+    return isCom ? "文件夹（Shell） · COM 扩展" : "文件夹（Shell）";
+  }
+  if (lower.includes("\\drive\\")) {
+    return isCom ? "驱动器 · COM 扩展" : "驱动器";
+  }
+  if (lower.includes("\\*\\")) {
+    return isCom ? "所有文件 · COM 扩展" : "所有文件";
+  }
+  return isCom ? "COM 扩展" : "右键菜单";
 }
 
 export function isMicrosoftItem(item: StartupItem): boolean {
   const origin = item.origin.toLowerCase();
   const publisher = (item.publisher ?? "").toLowerCase();
   return origin.startsWith("\\microsoft\\") || publisher.includes("microsoft");
+}
+
+/**
+ * Distinguishes a COM shell extension (`shellex\ContextMenuHandlers`) from a
+ * classic verb that delegates to a COM handler. Both expose a `COM ` command,
+ * but only the former is blocked machine-wide by CLSID.
+ */
+export function isContextMenuHandler(item: StartupItem): boolean {
+  return item.origin
+    .toLowerCase()
+    .includes("\\shellex\\contextmenuhandlers\\");
 }
 
 export function displayPath(value: string | null): string {

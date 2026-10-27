@@ -9,6 +9,7 @@ pub enum SourceKind {
     Uwp,
     ScheduledTask,
     Service,
+    ContextMenu,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -74,6 +75,14 @@ pub enum ActionRef {
     ScheduledTask {
         path: String,
     },
+    ContextMenuVerb {
+        hive: Hive,
+        subkey: String,
+    },
+    ShellExtensionBlocked {
+        clsid: String,
+        hive: Hive,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +107,12 @@ pub struct StartupItem {
     pub view: Option<RegView>,
     pub enabled: bool,
     pub readonly: bool,
+    /// True when a successful write changes the machine-wide state and
+    /// therefore needs an elevated token. It can differ from `scope`: an HKLM
+    /// registration that already has a per-user StartupApproved overlay is
+    /// written through HKCU and only affects the current user.
+    #[serde(default)]
+    pub machine_wide: bool,
     pub origin: String,
     #[serde(default)]
     pub warnings: Vec<String>,
@@ -125,14 +140,7 @@ where
 
 impl StartupItem {
     pub fn requires_elevation(&self) -> bool {
-        if self.readonly {
-            return false;
-        }
-        match &self.action {
-            Some(ActionRef::StartupApproved { hive, .. }) => *hive == Hive::Hklm,
-            Some(ActionRef::ScheduledTask { .. }) => self.scope == Scope::AllUsers,
-            _ => false,
-        }
+        !self.readonly && self.machine_wide
     }
 }
 
@@ -149,6 +157,13 @@ pub struct ScanResult {
 pub struct AppState {
     pub is_elevated: bool,
     pub version: String,
+    /// Account that owns the elevated token.
+    pub current_user: Option<String>,
+    /// Account that launched the process before UAC.
+    pub original_user: Option<String>,
+    /// UAC was answered with a different account than the one that launched
+    /// the process, so HKCU items belong to that other account.
+    pub user_mismatch: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
